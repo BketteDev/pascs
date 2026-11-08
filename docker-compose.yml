@@ -1,6 +1,5 @@
-# Portainer stack (Stacks > Add stack > Repository: this repo, compose path docker-compose.yml).
-# Set the environment variables in Portainer; ASSETS_DIR is the folder on the Docker host holding the built game assets
-# (maps, sound, players, weapons, ui copied from public/ after `npm run build` on a PC with the games installed).
+# Portainer stack: Stacks > Add stack > Repository (docker-compose.yml).
+# Game assets are directly built into the container image.
 services:
   game:
     build: .
@@ -10,10 +9,4 @@ services:
     environment:
       MAP: ${MAP:-de_dust2}
       TEAM_SIZE: ${TEAM_SIZE:-5}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD for the F4 admin menu}
-    volumes: # writable: the server caches its bot navigation (nav.json) inside each map folder
-      - ${ASSETS_DIR:-/opt/notcssource/assets}/maps:/app/public/maps
-      - ${ASSETS_DIR:-/opt/notcssource/assets}/sound:/app/public/sound
-      - ${ASSETS_DIR:-/opt/notcssource/assets}/players:/app/public/players
-      - ${ASSETS_DIR:-/opt/notcssource/assets}/weapons:/app/public/weapons
-      - ${ASSETS_DIR:-/opt/notcssource/assets}/ui:/app/public/ui
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}

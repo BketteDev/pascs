@@ -1,11 +1,3 @@
-# Game assets extracted from your own CS:S / CS:GO / GMod installs (Valve's content: never commit or redistribute).
-# Build them with `npm run build`, then copy them to the server next to the container (see README).
-public/maps/
-public/sound/
-public/players/
-public/weapons/
-public/ui/
-
 # local settings (admin password) and caches
 server.config.json
 .gzcache/
