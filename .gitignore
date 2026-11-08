@@ -4,3 +4,6 @@ server.config.json
 tools/.cache/
 node_modules/
 *.log
+
+# Exceeds GitHub 100MB file limit (cs_agency world.bin is 101MB)
+public/maps/cs_agency/

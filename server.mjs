@@ -35,7 +35,14 @@ function gzipped(file, st) { // -> path of an up-to-date gzip copy
 }
 function serve(req, res, file) {
   fs.stat(file, (err, st) => {
-    if (err || !st.isFile()) return res.writeHead(404).end('not found');
+    if (err || !st.isFile()) {
+      const dir = path.dirname(file), base = path.basename(file).toLowerCase();
+      try {
+        const found = fs.readdirSync(dir).find((f) => f.toLowerCase() === base);
+        if (found) return serve(req, res, path.join(dir, found));
+      } catch {}
+      return res.writeHead(404).end('not found');
+    }
     const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`, head = { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' };
     if (req.headers['if-none-match'] === etag) return res.writeHead(304, head).end();
     const send = (f, extra) => fs.createReadStream(f).on('error', () => res.destroy()).pipe(res.writeHead(200, { ...head, ...extra }));
