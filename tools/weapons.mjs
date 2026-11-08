@@ -1,0 +1,110 @@
+// Converts weapon view models (+ their textures) and weapon sounds into web assets: public/weapons/*, public/sound/*.
+// Usage: node tools/weapons.mjs
+import fs from 'fs';
+import path from 'path';
+import { loadModel, loadSkeleton, bakeSequences } from './mdl.mjs';
+import { png, vtfToRgba } from './vtf.mjs';
+import { WEAPONS } from '../public/weapon-defs.js';
+
+const CONTENT = path.resolve(import.meta.dirname, '..', '..', 'content', 'css_content');
+const OUT = path.resolve(import.meta.dirname, '..', 'public');
+fs.mkdirSync(path.join(OUT, 'weapons', 'tex'), { recursive: true });
+
+const readVmt = (name) => {
+  const f = path.join(CONTENT, 'materials', name + '.vmt');
+  if (!fs.existsSync(f)) return null;
+  const t = fs.readFileSync(f, 'latin1').toLowerCase().replace(/\\/g, '/');
+  const get = (k) => t.match(new RegExp('"?\\$' + k + '"?\\s+"?([^"\\s]+)"?'))?.[1];
+  return { base: get('basetexture'), alphatest: get('alphatest') === '1', translucent: get('translucent') === '1' };
+};
+const texCache = new Map();
+function texture(cdDirs, material) { // -> { tex, alpha } for the first search dir that has the material
+  for (const cd of cdDirs) {
+    const name = (cd + material).replace(/\\/g, '/').toLowerCase();
+    if (texCache.has(name)) return texCache.get(name);
+    const vmt = readVmt(name);
+    if (!vmt?.base) continue;
+    const vtf = path.join(CONTENT, 'materials', vmt.base + '.vtf');
+    if (!fs.existsSync(vtf)) continue;
+    const { W, H, rgba } = vtfToRgba(fs.readFileSync(vtf));
+    const alpha = vmt.alphatest ? 1 : vmt.translucent ? 2 : 0;
+    let data = rgba, ch = 4;
+    if (!alpha) { ch = 3; data = Buffer.alloc(W * H * 3); for (let i = 0; i < W * H; i++) rgba.copy(data, i * 3, i * 4, i * 4 + 3); }
+    const file = name.replace(/\//g, '__') + '.png';
+    fs.writeFileSync(path.join(OUT, 'weapons', 'tex', file), png(W, H, ch, data));
+    const out = { tex: file, alpha };
+    texCache.set(name, out);
+    return out;
+  }
+  return { tex: null, alpha: 0 };
+}
+
+// One .bin per weapon (loaded on demand by the client; all 28 view models with their baked animations are far too big to load up front).
+const manifest = {};
+for (const [key, def] of Object.entries(WEAPONS)) {
+  const bins = []; let binLen = 0;
+  const pushF32 = (arr) => { const a = new Float32Array(arr), off = binLen; bins.push(Buffer.from(a.buffer)); binLen += a.byteLength; return off; };
+  const file = path.join(CONTENT, 'models', 'weapons', def.model);
+  const m = loadModel(file), sk = loadSkeleton(file + '.mdl');
+  const meshes = m.meshes.map((mesh) => {
+    const entry = { material: mesh.material, ...texture(mesh.cd, mesh.material), count: mesh.pos.length / 3 };
+    for (const k of ['pos', 'nrm', 'uv', 'bw', 'bi']) entry[k] = pushF32(mesh[k]);
+    return entry;
+  });
+  // animations baked to skinning matrices (frames x bones x 12) + muzzle attachment per frame
+  const sequences = bakeSequences(sk).map((q) => ({ name: q.name, activity: q.activity, fps: q.fps, frames: q.frames, loop: q.loop, skin: pushF32(q.skin), attach: q.attach.length ? pushF32(q.attach) : -1 }));
+  manifest[key] = { bones: sk.bones.length, meshes, sequences };
+  for (const which of ['world', 'planted']) { // static world meshes: a thrown grenade, the dropped / planted C4
+    if (!def[which]) continue;
+    const wm = loadModel(path.join(CONTENT, 'models', 'weapons', def[which]));
+    manifest[key][which] = wm.meshes.map((mesh) => {
+      const entry = { material: mesh.material, ...texture(mesh.cd, mesh.material), count: mesh.pos.length / 3 };
+      for (const k of ['pos', 'nrm', 'uv']) entry[k] = pushF32(mesh[k]);
+      return entry;
+    });
+  }
+  fs.writeFileSync(path.join(OUT, 'weapons', key + '.bin'), Buffer.concat(bins));
+}
+fs.writeFileSync(path.join(OUT, 'weapons', 'weapons.json'), JSON.stringify(manifest));
+
+// sounds: every wav a weapon refers to, plus the generic ones
+const sounds = new Set(['weapons/zoom', 'radio/bombpl', 'radio/bombdef', 'items/itempickup', 'items/defuser_equip', 'weapons/c4/c4_exp_deb1', 'weapons/c4/c4_exp_deb2']);
+for (const def of Object.values(WEAPONS)) {
+  const s = def.sounds;
+  for (const v of Object.values(s)) {
+    if (typeof v === 'string') sounds.add('weapons/' + v);
+    else if (Array.isArray(v) && typeof v[1] === 'string') sounds.add('weapons/' + v[1]);
+    else if (Array.isArray(v)) for (const [, name] of v) sounds.add('weapons/' + name);
+  }
+}
+let missing = 0;
+for (const s of sounds) {
+  const src = path.join(CONTENT, 'sound', s + '.wav');
+  if (!fs.existsSync(src)) { console.log('missing sound', s); missing++; continue; }
+  fs.mkdirSync(path.dirname(path.join(OUT, 'sound', s)), { recursive: true });
+  fs.copyFileSync(src, path.join(OUT, 'sound', s + '.wav'));
+}
+// HUD / killfeed icons: the buy-menu weapon pictures turned into white silhouettes, as CS:S draws its HUD glyphs
+fs.mkdirSync(path.join(OUT, 'ui', 'icons'), { recursive: true });
+const icons = new Set(['kevlar', 'kevlar_helmet', 'bullet', 'defuser', ...Object.values(WEAPONS).map((d) => d.icon).filter(Boolean)]);
+const ICON_FILE = {};
+for (const name of icons) {
+  const f = path.join(CONTENT, 'materials', ...(ICON_FILE[name] ?? 'vgui/gfx/vgui/' + name).split('/')) + '.vtf';
+  if (!fs.existsSync(f)) { console.log('missing icon', name); continue; }
+  const { W, H, rgba } = vtfToRgba(fs.readFileSync(f));
+  for (let i = 0; i < W * H; i++) { rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = 255; }
+  fs.writeFileSync(path.join(OUT, 'ui', 'icons', name + '.png'), png(W, H, 4, rgba));
+}
+// the C4 glyph (HUD, radar, kill feed): CS:S draws it from its icon font, which is not in the content, so draw the silhouette:
+// a brick of charges with a keypad and a little display, wires on top
+{
+  const W = 96, H = 56, px = Buffer.alloc(W * H * 4), fill = (x0, y0, x1, y1, a) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) px.set([255, 255, 255, a], (y * W + x) * 4); };
+  fill(6, 18, 90, 50, 255);                                    // the block
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) fill(12 + c * 9, 25 + r * 8, 18 + c * 9, 30 + r * 8, 0); // keypad
+  fill(46, 24, 82, 34, 0);                                     // display
+  fill(46, 38, 82, 41, 0); fill(46, 44, 82, 47, 0);            // tape bands
+  for (let x = 20; x < 76; x++) { const y = Math.round(12 + 5 * Math.sin(x / 6)); fill(x, y, x + 1, y + 3, 255); } // wire
+  fill(18, 10, 22, 18, 255); fill(72, 8, 76, 18, 255);         // wire ends
+  fs.writeFileSync(path.join(OUT, 'ui', 'icons', 'c4.png'), png(W, H, 4, px));
+}
+console.log(`weapons: ${Object.keys(manifest).length} animated view models, ${texCache.size} textures, ${sounds.size - missing} sounds`);
