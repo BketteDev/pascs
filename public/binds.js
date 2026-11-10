@@ -1,5 +1,5 @@
 // Key bindings (Options > Keyboard): action -> KeyboardEvent.code, saved in localStorage. `binds` is one live object every module reads,
-// so a rebind applies at once. Weapon slots stay on 1-6 like CS:S; Esc is reserved for the menu.
+// so a rebind applies at once. Weapon slots stay on 1-5; 6 selects smoke, 7 incendiary; Esc is reserved for the menu.
 export const ACTIONS = [
   ['forward', 'Move forward', 'KeyW'], ['back', 'Move back', 'KeyS'], ['left', 'Move left (strafe)', 'KeyA'], ['right', 'Move right (strafe)', 'KeyD'],
   ['jump', 'Jump', 'Space'], ['duck', 'Duck', 'ControlLeft'], ['walk', 'Walk', 'ShiftLeft'],

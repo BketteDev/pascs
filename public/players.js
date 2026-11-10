@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { trace, TICK } from './physics.js';
 import { createRagdoll, stepRagdoll, ragdollPose } from './ragdoll.js';
 import { HITGROUP_MULT, WEAPONS } from './weapon-defs.js';
+import { createIncendiaryModel } from './incendiary-model.js';
 import { agentsFor, AGENT_NAMES } from './agents.js';
 
 const skinnedVertex = `
@@ -123,8 +124,18 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
   }
   // swap the weapon in their hand: the world model is bone-merged onto the hand (skin()), the upper-body pose follows its class (pose())
   function setHeldWeapon(bot, key) {
-    if (!info.weapons[key] || bot.weaponKey === key) return;
+    const fire = WEAPONS[key]?.grenade === 'fire';
+    if ((!info.weapons[key] && !fire) || bot.weaponKey === key) return;
     for (const m of bot.wbones.meshes) bot.group.remove(m);
+    bot.fireHand = null;
+    if (fire) {
+      const socket = new THREE.Group(), model = createIncendiaryModel(key);
+      model.rotation.x = Math.PI / 2; model.position.set(2, 0, -2); socket.add(model);
+      socket.matrixAutoUpdate = false; socket.visible = !bot.dead; bot.group.add(socket);
+      const wbones = []; wbones.meshes = [socket];
+      Object.assign(bot, { weaponKey: key, wdef: { bones: [] }, wbones, fireHand: { socket, hand: bot.def.bones.findIndex((b) => b.name === 'ValveBiped.Bip01_R_Hand') } });
+      return;
+    }
     const wdef = info.weapons[key];
     Object.assign(bot, { weaponKey: key, wdef, wbones: skinned(bot.group, wdef.meshes, wdef.bones.length, bot.sunVis), wworld: new Float32Array(wdef.bones.length * 12),
       wmap: wdef.bones.map((b) => bot.def.bones.findIndex((x) => x.name === b.name)) });
@@ -342,6 +353,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
 
   function skin(bot) { // bot.world (bone -> model space) -> skinning matrices, then bone-merge the rifle
     const W = bot.world, t = bot.tmp, bones = bot.def.bones;
+    if (bot.fireHand?.hand >= 0) toThree(W, bot.fireHand.hand * 12, bot.fireHand.socket.matrix.elements);
     for (let i = 0; i < bones.length; i++) {
       mul34(W, i * 12, bones[i].poseToBone, 0, t, 0);
       toThree(t, 0, bot.bones[i].matrixWorld.elements);

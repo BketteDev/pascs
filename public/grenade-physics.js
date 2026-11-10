@@ -15,14 +15,21 @@ export function launch(world, limit, p, power) {
 
 /** One step of dt seconds on g { o, v, rest }; returns the impact speed when it bounced, else 0. */
 export function stepFlight(world, limit, g, dt) {
+  g.impactNormal = null;
   if (g.rest) return 0;
   g.v[2] -= GRENADE.gravity * 800 * dt;
   const to = g.o.map((c, i) => c + g.v[i] * dt), r = trace(world, g.o, to, HULL[0], HULL[1], limit);
   if (!r.normal) { if (r.startSolid) g.v = [0, 0, 0]; else g.o = to; return 0; }
   g.o = [...r.end];
+  g.impactNormal = r.normal;
   const n = r.normal, vn = g.v[0] * n[0] + g.v[1] * n[1] + g.v[2] * n[2], speed = Math.hypot(...g.v);
   g.v = g.v.map((c, i) => (c - 2 * vn * n[i]) * GRENADE.bounce);
   if (n[2] > 0.7) { g.v[0] *= GRENADE.friction; g.v[1] *= GRENADE.friction; }
   if (n[2] > 0.7 && Math.hypot(...g.v) < 25) { g.v = [0, 0, 0]; g.rest = 1; }
   return speed;
+}
+
+export function detonates(kind, g) {
+  if (kind === 'fire') return g.impactNormal?.[2] > 0.7 || g.age >= GRENADE.fireFuse;
+  return kind === 'smoke' ? g.rest || g.age >= 3 : g.age >= GRENADE.fuse;
 }

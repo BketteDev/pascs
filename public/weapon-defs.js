@@ -118,12 +118,21 @@ export const WEAPONS = {
   hegrenade: { upper: 'GREN', name: 'HE Grenade', icon: 'hegrenade', slot: 4, model: 'v_eq_fraggrenade', world: 'w_eq_fraggrenade_thrown', price: 300, grenade: 'he', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'hegrenade/he_bounce-1', pin: 'pinpull' } },
   flashbang: { upper: 'GREN', name: 'Flashbang', icon: 'flashbang', slot: 4, model: 'v_eq_flashbang', world: 'w_eq_flashbang_thrown', price: 200, grenade: 'flash', max: 2, ...noGrenadeStats, sounds: { explode: 'flashbang/flashbang_explode1', bounce: 'flashbang/grenade_hit1', pin: 'pinpull' } },
   smokegrenade: { upper: 'GREN', name: 'Smoke Grenade', icon: 'smokegrenade', slot: 4, model: 'v_eq_smokegrenade', world: 'w_eq_smokegrenade_thrown', price: 300, grenade: 'smoke', max: 1, ...noGrenadeStats, sounds: { explode: 'smokegrenade/sg_explode', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
+  molotov: { upper: 'GREN', name: 'Molotov', icon: 'molotov', slot: 4, price: 400, team: 't', grenade: 'fire', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
+  incgrenade: { upper: 'GREN', name: 'Incendiary Grenade', icon: 'incgrenade', slot: 4, price: 600, team: 'ct', grenade: 'fire', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
 
   // ---- the bomb (Terrorists get one per round; not for sale) ----
   c4: { upper: 'C4', name: 'C4', icon: 'c4', slot: 5, model: 'v_c4', world: 'w_c4', planted: 'w_c4_planted', c4: true, ...noGrenadeStats,
     sounds: { plant: 'c4/c4_plant', click: 'c4/c4_click', beep: 'c4/c4_beep1', disarm: 'c4/c4_disarm', explode: 'c4/c4_explode1' } },
 };
 export const ORDER = Object.keys(WEAPONS);
+export const GRENADES = ORDER.filter((key) => WEAPONS[key].grenade);
+export function canCarryGrenade(gr, key) {
+  const w = WEAPONS[key];
+  return !!w?.grenade && (gr[key] ?? 0) < w.max &&
+    GRENADES.reduce((n, k) => n + (gr[k] ?? 0), 0) < 4 &&
+    (w.grenade !== 'fire' || !GRENADES.some((k) => WEAPONS[k].grenade === 'fire' && gr[k] > 0));
+}
 export const DEFAULT_PISTOL = { ct: 'usp', t: 'glock' };
 
 // CS:S hit groups: head, chest, stomach, left/right arm, left/right leg -> damage multiplier
@@ -136,10 +145,10 @@ export const BUY = [
   cat('Heavy', ['m3', 'xm1014', 'm249']),
   cat('SMGs', ['mac10', 'tmp', 'mp5', 'ump45', 'p90']),
   cat('Rifles', ['galil', 'famas', 'ak47', 'm4a1', 'aug', 'sg552', 'scout', 'sg550', 'g3sg1', 'awp']),
-  { cat: 'Gear', items: [{ id: 'kevlar', name: 'Kevlar Vest', icon: 'kevlar', glyph: 't', price: 650 }, { id: 'vesthelm', name: 'Kevlar + Helmet', icon: 'kevlar', glyph: 'u', price: 1000 }, { id: 'defuser', name: 'Defuse Kit', icon: 'defuser', price: 200, team: 'ct' }, ...['hegrenade', 'flashbang', 'smokegrenade'].map((id) => ({ id, price: WEAPONS[id].price, name: WEAPONS[id].name, icon: WEAPONS[id].icon }))] },
+  { cat: 'Gear', items: [{ id: 'kevlar', name: 'Kevlar Vest', icon: 'kevlar', glyph: 't', price: 650 }, { id: 'vesthelm', name: 'Kevlar + Helmet', icon: 'kevlar', glyph: 'u', price: 1000 }, { id: 'defuser', name: 'Defuse Kit', icon: 'defuser', price: 200, team: 'ct' }, ...GRENADES.map((id) => ({ id, price: WEAPONS[id].price, team: WEAPONS[id].team, name: WEAPONS[id].name, icon: WEAPONS[id].icon }))] },
 ];
 export const START_MONEY = 800, MAX_MONEY = 16000, BUY_TIME = 90;
 export const REWARD = { kill: 300, knife: 1500, win: 3250, loss: 1400, plant: 300, defuse: 300, plantedLoss: 800, rescue: 1000, hostageKill: 1500 };
 // C4 (CS:S): 3 s to plant inside a bombsite, 10 s to defuse (5 s with a kit), explodes after the timer; damage 500 with a 1750 unit radius.
 export const BOMB = { timer: 40, plantTime: 3, defuseTime: 10, kitTime: 5, damage: 500, radius: 1750, useRange: 72 };
-export const GRENADE = { speedMax: 750, gravity: 0.4, bounce: 0.45, friction: 0.8, fuse: 1.5, heRadius: 350, heDamage: 98, smokeTime: 18, smokeRadius: 140, flashRange: 1500 };
+export const GRENADE = { speedMax: 750, gravity: 0.4, bounce: 0.45, friction: 0.8, fuse: 1.5, heRadius: 350, heDamage: 98, smokeTime: 18, smokeRadius: 140, flashRange: 1500, fireFuse: 3.5, fireTime: 7, fireRadius: 144, fireCellRadius: 54, fireDps: 40, fireTick: 0.2 };

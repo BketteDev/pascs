@@ -1,0 +1,10 @@
+node_modules/
+.gzcache/
+tools/.cache/
+public/maps/
+public/sound/
+public/players/
+public/weapons/
+public/ui/
+server.config.json
+*.log

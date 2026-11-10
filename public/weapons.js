@@ -1,7 +1,8 @@
 // Weapons: view models (loaded on demand), hitscan firing with CS:S-style recoil/spread and wall penetration, shotguns, grenade throwing,
 // ammo/reload, sounds, bullet decals, HUD.
 import * as THREE from 'three';
-import { WEAPONS, ORDER } from './weapon-defs.js';
+import { WEAPONS, ORDER, GRENADES } from './weapon-defs.js';
+import { createIncendiaryModel } from './incendiary-model.js';
 import { trace } from './physics.js';
 import { march } from './ballistics.js';
 import { audio, play as playSound, playAt, preload } from './audio.js';
@@ -57,6 +58,13 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const holder = new THREE.Group(); scene.add(holder);
   const vms = {}, loading = new Map(); // key -> { group, bones, seqs, anim }
   const loadVm = (key) => {
+    if (WEAPONS[key].grenade === 'fire') {
+      if (!vms[key]) {
+        const group = createIncendiaryModel(key); group.visible = false; holder.add(group);
+        vms[key] = { group, procedural: true, anim: null };
+      }
+      return Promise.resolve(vms[key]);
+    }
     if (!loading.has(key)) loading.set(key, fetch(`weapons/${key}.bin`).then((r) => r.arrayBuffer()).then((bin) => {
       const info = manifest[key];
       const group = new THREE.Group(); group.visible = false;
@@ -99,6 +107,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   // ---------- view model animation (baked sequences, chosen by activity like the engine) ----------
   const findSeqs = (vm, act) => vm.seqs.filter((q) => q.activity === act);
   function playAct(key, act, fallback) {
+    if (vms[key].procedural) { vms[key].anim = { act, start: performance.now() / 1000 }; return 0.7; }
     const vm = vms[key], sil = WEAPONS[key].silenced ? findSeqs(vm, act + '_SILENCED') : []; // the USP-S plays its suppressed sequences
     const list = sil.length ? sil : findSeqs(vm, act).length ? findSeqs(vm, act) : findSeqs(vm, fallback ?? '');
     if (!list.length) return 0;
@@ -109,6 +118,15 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const muzzle = new THREE.Vector3();
   function poseViewModel(key, t) { // write interpolated skinning matrices into the bones; returns muzzle (model space) or null
     const vm = vms[key];
+    if (vm.procedural) {
+      const elapsed = t - (vm.anim?.start ?? t), throwing = vm.anim?.act === 'ACT_VM_THROW';
+      const draw = vm.anim?.act === 'ACT_VM_DRAW' ? Math.max(0, 1 - elapsed / 0.5) : 0;
+      const swing = throwing ? Math.sin(Math.min(elapsed / 0.4, 1) * Math.PI) : 0;
+      vm.group.position.set(7, -8 - draw * 14 + swing * 4, -22 - swing * 7);
+      vm.group.rotation.set(-0.1 - swing, 0, -0.25);
+      vm.group.visible = !throwing || elapsed < 0.22;
+      return null;
+    }
     if (!vm.anim || (!(s.pin && key === s.cur) && !vm.anim.seq.loop && (t - vm.anim.start) * vm.anim.seq.fps >= vm.anim.seq.frames - 1)) {
       if (!vm.anim || !vm.anim.seq.activity.startsWith('ACT_VM_IDLE')) playAct(key, 'ACT_VM_IDLE');
     }
@@ -256,7 +274,6 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const setZoom = (z) => { s.zoom = z; applySpeed(); hudUpdate(); };
 
   let owned = new Set(initial.owned); // the server owns the loadout (buy menu); we mirror it
-  const GRENADES = ['hegrenade', 'flashbang', 'smokegrenade'];
   const showList = () => hud.showWeapons([...owned].map((k) => ({ key: k, slot: WEAPONS[k].slot, icon: WEAPONS[k].icon })).sort((a, b) => a.slot - b.slot), s.cur);
   const bySlot = (slot) => ORDER.find((k) => owned.has(k) && WEAPONS[k].slot === slot);
   function select(key) {
@@ -405,9 +422,9 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   }
   function release() {
     const key = s.cur, power = s.pin.power;
-    s.pin = null; s.throwing = { end: now() + 0.7 };
+    s.pin = null; const pendingThrow = s.throwing = { end: now() + 0.7 };
     playAct(key, 'ACT_VM_THROW');
-    setTimeout(() => net.send({ t: 'throw', w: key, power }), 220); // the hand leaves the grenade a moment into the animation
+    setTimeout(() => { if (s.throwing === pendingThrow && alive()) net.send({ t: 'throw', w: key, power }); }, 220); // cancelled if the player dies or switches weapons
   }
 
   // ---------- input ----------
@@ -433,11 +450,11 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   addEventListener('contextmenu', (e) => e.preventDefault());
   addEventListener('keydown', (e) => {
     if (e.repeat || uiOpen()) return;
-    const n = Number(e.code.match(/^Digit([1-6])$/)?.[1] ?? 0);
+    const n = Number(e.code.match(/^Digit([1-7])$/)?.[1] ?? 0);
     if (n === 4) { // cycle: the next owned grenade after the current one (the first when none is out)
       const mine = GRENADES.filter((k) => owned.has(k)), i = mine.indexOf(s.cur);
       if (mine.length) select(mine[(i + 1) % mine.length]);
-    } else if (n) { const k = n <= 3 ? bySlot(n) : n === 5 ? 'c4' : n === 6 ? GRENADES[2] : null; if (k && owned.has(k)) select(k); } // 5 = C4 (as in CS:S)
+    } else if (n) { const k = n <= 3 ? bySlot(n) : n === 5 ? 'c4' : n === 6 ? 'smokegrenade' : GRENADES.find((g) => owned.has(g) && WEAPONS[g].grenade === 'fire'); if (k && owned.has(k)) select(k); } // 6 = smoke, 7 = incendiary
     else if (is('lastweapon', e.code)) select(s.last);
     else if (is('reload', e.code)) startReload();
     else if (is('drop', e.code) && s.cur === 'c4') { stopPlant(); net.send({ t: 'drop' }); }
@@ -522,7 +539,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   };
   function refill() { // new round: every gun loaded, full reserve (CS:S restocks survivors at round start)
     for (const k of owned) ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
-    s.reload = null; s.emptyClicked = false; hudUpdate();
+    s.reload = null; s.pin = null; s.throwing = null; s.emptyClicked = false; hudUpdate();
   }
   return { debug, update, render, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned };
 }
