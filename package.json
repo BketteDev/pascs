@@ -1,0 +1,20 @@
+{
+  "name": "css-web",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test-physics.mjs && node test-ballistics.mjs && node test-server.mjs",
+    "build": "node tools/build.mjs de_dust2 && node tools/build.mjs de_inferno && node tools/build.mjs cs_office && node tools/build.mjs de_lake --bsp \"C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/csgo/maps/de_lake.bsp\" --mode wingman && node tools/build.mjs de_nuke && node tools/build.mjs cs_agency --bsp \"C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/csgo/maps/cs_agency.bsp\" && python tools/dds2png.py \"C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/csgo/resource/overviews/cs_agency_radar.dds\" public/maps/cs_agency/overview.png public/maps/cs_agency/overview.json && node tools/weapons.mjs && node tools/players.mjs",
+    "start": "node server.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "three": "^0.170.0",
+    "ws": "^8.22.1"
+  },
+  "private": "true"
+}

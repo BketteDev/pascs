@@ -1,0 +1,197 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CS:S Web - de_dust2</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font: 14px monospace; color: #fff; }
+  canvas { display: block; }
+  /* ---- CS:S HUD: amber numbers on dark rounded panels ---- */
+  /* CS:S draws its HUD numbers with Valve's "HalfLife2" font: drop halflife2.ttf (Counter-Strike Source/hl2/resource) into ui/fonts and it is used;
+     until then a close stand-in. */
+  @font-face { font-family: 'HalfLife2'; src: url(ui/fonts/halflife2.ttf) format('truetype'); }
+  /* CS:S's own fonts (cstrike/resource): HUD numbers + icons, kill-feed icons, weapon-selection icons, the logo */
+  @font-face { font-family: 'Counter-Strike'; src: url(ui/fonts/cstrike.ttf) format('truetype'); }
+  @font-face { font-family: 'csd'; src: url(ui/fonts/csd.ttf) format('truetype'); }
+  @font-face { font-family: 'cs'; src: url(ui/fonts/cs.ttf) format('truetype'); }
+  @font-face { font-family: 'Counter-Strike Logo'; src: url(ui/fonts/cslogo.ttf) format('truetype'); }
+  .glyph { font-family: 'Counter-Strike'; font-weight: normal; }
+  :root { --hud: rgba(255, 176, 0, 0.85); --panel: rgba(0, 0, 0, 0.38); }
+  .hudfont { font-family: 'Counter-Strike', 'HalfLife2', 'Trebuchet MS', 'Arial Narrow', Arial, sans-serif; font-weight: bold; color: var(--hud); text-shadow: 0 0 4px rgba(255,176,0,.25); }
+  #cross { position: fixed; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; --gap: 4px; --len: 6px; --th: 2px; --col: rgb(50, 250, 50); --ol: 0px; }
+  #cross i, #cross b { position: absolute; background: var(--col); box-shadow: 0 0 0 var(--ol) #000, 0 0 1px #000a; }
+  #cross i:nth-child(1) { width: var(--th); height: var(--len); left: calc(var(--th) / -2); bottom: var(--gap); }
+  #cross i:nth-child(2) { width: var(--th); height: var(--len); left: calc(var(--th) / -2); top: var(--gap); }
+  #cross i:nth-child(3) { height: var(--th); width: var(--len); top: calc(var(--th) / -2); right: var(--gap); }
+  #cross i:nth-child(4) { height: var(--th); width: var(--len); top: calc(var(--th) / -2); left: var(--gap); }
+  #cross b { display: none; width: var(--th); height: var(--th); left: calc(var(--th) / -2); top: calc(var(--th) / -2); }
+  #cross.dot b { display: block; }
+  #devpanel { position: fixed; right: 16px; top: 16px; width: 380px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow: auto; z-index: 20; display: none; background: rgba(20,20,20,.92); color: #ddd; font: 12px Verdana, Arial, sans-serif; padding: 12px; border: 1px solid #555; border-radius: 4px; }
+  #devpanel h3 { margin: 10px 0 6px; font-size: 12px; color: #ffd27a; text-transform: uppercase; } #devpanel h3:first-child { margin-top: 0; }
+  #devpanel label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 3px 0; } #devpanel input[type=range] { width: 170px; }
+  #devpanel textarea { width: 100%; height: 190px; box-sizing: border-box; background: #111; color: #cfc; font: 11px monospace; border: 1px solid #444; }
+  #devpanel button { margin: 4px 4px 0 0; background: #3a3a3a; color: #eee; border: 1px solid #666; padding: 3px 8px; cursor: pointer; } #devpanel .hint { color: #999; margin: 4px 0; }
+  #debugout { position: fixed; left: 12px; top: 248px; z-index: 6; pointer-events: none; display: none; white-space: pre; font: 12px monospace; color: #e8e8e8; text-shadow: 1px 1px 0 #000; background: rgba(0,0,0,.35); padding: 6px 8px; border-radius: 3px; }
+  /* CS:S CHudScope: a square of 7/8 the screen height (black beyond it), the lens dirt over it, the circle cut by four mirrored scope_arc
+     quarters, and 1px black lines across the whole screen */
+  #scope { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 0; overflow: hidden; /* under the HUD panels, which follow it in the page */
+    background: linear-gradient(#000, #000) center / 1px 100% no-repeat, linear-gradient(#000, #000) center / 100% 1px no-repeat; }
+  #scope .box { position: absolute; left: 50%; top: 50%; width: 87.5vh; height: 87.5vh; transform: translate(-50%, -50%); box-shadow: 0 0 0 100vmax #000;
+    background: url(ui/scope_lens.png) 0 0 / 100% 100%; }
+  #scope .arc { position: absolute; width: 50%; height: 50%; background: url(ui/scope_arc.png) 0 0 / 100% 100%; }
+  #scope .br { left: 50%; top: 50%; } #scope .bl { left: 0; top: 50%; transform: scaleX(-1); } #scope .tr { left: 50%; top: 0; transform: scaleY(-1); } #scope .tl { left: 0; top: 0; transform: scale(-1, -1); }
+  #radar { position: fixed; left: 14px; top: 14px; width: 220px; height: 220px; border-radius: 8px; pointer-events: none; }
+  #feed { position: fixed; right: 12px; top: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; pointer-events: none;
+    font: bold 13px Verdana, Tahoma, sans-serif; }
+  #feed .notice { display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.55); border: 1px solid transparent; border-radius: 4px; padding: 2px 8px; height: 24px; }
+  #feed .notice.local { border-color: rgba(220, 0, 0, 0.9); }
+  #feed img { height: 20px; filter: drop-shadow(0 0 1px #000); }
+  .panel { position: fixed; bottom: 4px; display: flex; align-items: center; gap: 12px; background: rgba(0,0,0,.4); border-radius: 8px; padding: 4px 18px; height: 56px; box-sizing: border-box; pointer-events: none; }
+  .panel .num { font-size: 46px; line-height: 1; min-width: 70px; text-align: right; position: relative; top: -5px; } /* the Counter-Strike font sits low in its line */
+  .panel.low .num { color: #ff4030; text-shadow: 0 0 6px rgba(255,40,20,.5); }
+  .panel .sep { width: 2px; align-self: stretch; margin: 6px 0; background: var(--hud); opacity: .6; }
+  .panel img { height: 30px; opacity: .85; filter: sepia(1) saturate(6) hue-rotate(-12deg); }
+  .panel .glyph { font-size: 34px; opacity: .85; }
+  #roundbar { position: fixed; left: 50%; bottom: 4px; transform: translateX(-50%); pointer-events: none; }
+  #roundbar .row { display: flex; align-items: center; gap: 12px; height: 56px; padding: 4px 18px; background: rgba(0,0,0,.4); border-radius: 8px; }
+  #roundbar .team, #roundscore { display: none; }
+  #clockicon { font-size: 34px; color: var(--hud); opacity: .85; }
+  #roundtime { min-width: 104px; text-align: right; position: relative; top: -5px; font: 46px 'Counter-Strike', 'HalfLife2', 'Trebuchet MS', Arial, sans-serif; color: var(--hud); text-shadow: 0 0 4px rgba(255,176,0,.25); }
+  #roundtime.low { color: #ff3b30; animation: blink 1s steps(2) infinite; } @keyframes blink { 50% { opacity: .35; } }
+  #banner { position: fixed; left: 50%; top: 24%; transform: translateX(-50%); display: none; font: bold 34px 'Trebuchet MS', Arial, sans-serif; text-shadow: 0 0 10px #000, 2px 2px #000; pointer-events: none; }
+  #money { position: fixed; right: 22px; bottom: 66px; font-size: 40px; opacity: .6; }
+  #wsel { position: fixed; right: 14px; top: 26%; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; opacity: 0; transition: opacity .25s; pointer-events: none; font: bold 14px Trebuchet MS, Arial, sans-serif; color: var(--hud); }
+  #wsel .w { display: flex; align-items: center; gap: 10px; min-width: 130px; justify-content: flex-end; padding: 5px 12px; background: rgba(0,0,0,.35); border: 1px solid transparent; border-radius: 4px; }
+  #wsel .w.cur { background: rgba(255,176,0,.22); border-color: rgba(255,176,0,.8); } #wsel .w span { margin-right: auto; opacity: .8; } #wsel img { height: 28px; filter: sepia(1) saturate(6) hue-rotate(-12deg); }
+  #buymenu { position: fixed; inset: 0; display: none; z-index: 3; pointer-events: none; text-align: center; }
+  #buymenu svg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 96vmin; max-height: 96vmin; font-family: Verdana, Tahoma, sans-serif; }
+  #buymenu .disc { fill: rgba(24,26,30,.74); stroke: rgba(255,255,255,.35); stroke-width: 2; }
+  #buymenu path { fill: transparent; transition: fill .06s; } #buymenu .hot path { fill: rgba(255,255,255,.16); } #buymenu .off { opacity: .4; }
+  #buymenu .sep { stroke: rgba(255,255,255,.38); stroke-width: 1.5; }
+  #buymenu text { text-anchor: middle; fill: #f0f0f0; } #buymenu .nm { font-size: 13px; font-weight: bold; } #buymenu .pr { font-size: 14px; fill: #7fd36a; font-weight: bold; } #buymenu .pr.bad { fill: #e0443a; }
+  #buymenu .core { fill: rgba(16,18,22,.9); stroke: rgba(255,255,255,.3); } #buymenu .badge { fill: #2a2a2a; stroke: #c9a24a; stroke-width: 3; } #buymenu .star { fill: #d8b25a; }
+  #buymenu .key { font-size: 10px; fill: #9aa; } #buymenu .money { font-size: 18px; fill: #7fd36a; font-weight: bold; }
+  #buymenu .gl { fill: #f0f0f0; text-anchor: middle; }
+  #buymenu .dot { fill: #fff; stroke: #000; }
+  #teammenu { position: fixed; inset: 0; z-index: 6; display: none; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(rgba(8,9,12,.55), rgba(8,9,12,.85)); font-family: 'Trebuchet MS', Arial, sans-serif; color: #fff; }
+  .tm-status { position: absolute; top: 14px; left: 0; right: 0; text-align: center; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #aab4c0; }
+  .tm-row { display: flex; align-items: flex-end; gap: 10px; }
+  .tm-col { width: 360px; display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+  .tm-head { text-align: center; line-height: 1.3; margin-bottom: 6px; } .tm-head b { display: block; font-size: 24px; letter-spacing: 1px; text-transform: uppercase; } .tm-count { font-size: 12px; color: #c8ccd2; }
+  .tm-col.t .tm-head b { color: #e8b84a; } .tm-col.ct .tm-head b { color: #a9c6f0; }
+  .tm-disc { position: relative; width: 300px; height: 300px; margin: 40px 0 150px; transition: transform .12s; }
+  .tm-emblem { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; opacity: .75; transition: opacity .12s, filter .12s; }
+  .tm-col:hover .tm-emblem, .tm-col.mine .tm-emblem { opacity: 1; filter: drop-shadow(0 0 18px rgba(255,255,255,.35)); }
+  .tm-disc canvas { position: absolute; left: -40px; top: -40px; width: 380px; height: 520px; pointer-events: none; }
+  .tm-col.full { opacity: .45; cursor: not-allowed; }
+  .tm-side { position: absolute; top: 46%; display: flex; flex-direction: column; gap: 4px; font-size: 12px; } .tm-side.t { left: 16px; } .tm-side.ct { right: 16px; align-items: flex-end; }
+  .tm-p { display: flex; align-items: center; gap: 8px; } .tm-side.ct .tm-p { flex-direction: row-reverse; } .tm-p img { width: 22px; height: 22px; }
+  .tm-p s { font-size: 9px; color: #889; text-decoration: none; border: 1px solid #556; padding: 0 3px; }
+  .tm-note { position: absolute; bottom: 22%; font-size: 12px; color: #aab4c0; }
+  .tm-foot { position: absolute; right: 26px; bottom: 22px; display: flex; gap: 28px; }
+  .tm-btn { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #dde3ea; } .tm-btn:hover { color: #fff; text-shadow: 0 0 8px rgba(255,255,255,.5); } .tm-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #hurt { position: fixed; inset: 0; opacity: 0; pointer-events: none; z-index: 4; transition: opacity .35s; background: radial-gradient(ellipse at center, rgba(120,0,0,0) 35%, rgba(170,0,0,.85) 100%); }
+  #mapmenu { position: fixed; inset: 0; z-index: 20; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 28px; background: linear-gradient(#000a, #000e), url(ui/menu.png) center / cover; font-family: 'Trebuchet MS', Arial, sans-serif; color: #fff; }
+  #mapmenu h1 { margin: 0; font-family: 'Counter-Strike Logo'; font-weight: normal; letter-spacing: 6px; text-transform: uppercase; font-size: 28px; } #mapmenu .maps { display: flex; gap: 34px; flex-wrap: wrap; justify-content: center; }
+  #mapmenu a { width: 300px; text-decoration: none; color: #fff; background: rgba(20,24,30,.9); border: 2px solid #333; border-radius: 3px; overflow: hidden; transition: transform .12s, border-color .12s; } #mapmenu a:hover { transform: translateY(-4px); border-color: #ffd27a; }
+  #mapmenu img { display: block; width: 300px; height: 300px; object-fit: cover; background: #111; filter: sepia(1) hue-rotate(60deg) saturate(1.5) brightness(.7); } #mapmenu i { display: block; padding: 0 0 10px; text-align: center; font-style: normal; font-size: 12px; letter-spacing: 2px; color: #ffd27a; text-transform: uppercase; } #mapmenu b { display: block; padding: 12px; text-align: center; letter-spacing: 3px; text-transform: uppercase; }
+  #changemap { margin-top: 14px; color: #ffd27a; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; }
+  #c4icon { position: fixed; left: 14px; bottom: 66px; padding: 4px 12px; font-size: 38px; line-height: 1; color: var(--hud); background: rgba(0,0,0,.4); border-radius: 8px; display: none; pointer-events: none; } /* "you have the bomb": the C4 glyph of CS:S's HUD font */
+  #c4icon.insite { color: #3fe03f; animation: blink 0.8s steps(2) infinite; }
+  #actbar { position: fixed; left: 50%; bottom: 28%; transform: translateX(-50%); width: 360px; display: none; pointer-events: none; text-align: center; font: bold 15px 'Trebuchet MS', Arial, sans-serif; color: #fff; text-shadow: 0 1px 3px #000; }
+  #actbar .track { margin-top: 6px; height: 12px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35); border-radius: 2px; overflow: hidden; } #actfill { height: 100%; width: 0; background: var(--hud); }
+  #clockbomb { display: none; font-size: 38px; color: #ff3c28; animation: blink 0.7s steps(2) infinite; }
+  #roundbar.bomb #clockbomb { display: block; } #roundbar.bomb #roundtime, #roundbar.bomb #clockicon { display: none; }
+  #banner { white-space: pre-line; text-align: center; }
+  #deathmsg { position: fixed; left: 50%; bottom: 17%; transform: translateX(-50%); display: none; pointer-events: none; font: bold 20px 'Trebuchet MS', Arial, sans-serif; color: #fff; text-shadow: 0 0 6px #000, 1px 1px #000; white-space: nowrap; }
+  body.dead #cross, body.dead #scope, body.dead #c4icon, body.dead #actbar { display: none !important; }
+  /* GMod-style connection panel: dark box at the top, a title and a running mm:ss.mmm timer */
+  /* scoreboard (hold Tab), after the CS:S one */
+  #scoreboard { position: fixed; left: 50%; top: 4%; transform: translateX(-50%); width: min(1000px, 96vw); z-index: 9; display: none; pointer-events: none;
+    background: rgba(0,0,0,.62); color: #ddd; font: 13px Verdana, Tahoma, sans-serif; padding: 8px 12px 14px; }
+  #scoreboard .sb-top { display: grid; grid-template-columns: 1fr auto auto 1fr; gap: 18px; align-items: center; color: #bbb; font-size: 12px; }
+  #scoreboard .sb-top span:last-child { text-align: right; }
+  #scoreboard .sb-top b { font: bold 42px Verdana, sans-serif; } #scoreboard .ct { color: #4a9cff; } #scoreboard .t { color: #ff3c3c; }
+  #scoreboard .sb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  #scoreboard .sb-title { font-size: 19px; margin: 4px 0 6px; } #scoreboard .sb-title span { display: block; font-size: 12px; }
+  #scoreboard .sb-team.ct .sb-title { color: #4a9cff; } #scoreboard .sb-team.t .sb-title { color: #ff3c3c; text-align: right; }
+  #scoreboard table { width: 100%; border-collapse: collapse; } #scoreboard th { font-weight: normal; font-size: 11px; color: #999; text-align: right; padding: 2px 6px; }
+  #scoreboard td { text-align: right; padding: 2px 6px; } #scoreboard .nm { text-align: left; width: 50%; overflow: hidden; white-space: nowrap; }
+  #scoreboard .ct td { color: #9cc8ff; } #scoreboard .t td { color: #ff9a9a; }
+  #scoreboard td img { width: 18px; height: 18px; vertical-align: middle; display: block; }
+  #scoreboard tr.dead td { opacity: .45; } #scoreboard tr.me td { background: rgba(255,170,40,.12); box-shadow: inset 0 1px 0 #e8a03c, inset 0 -1px 0 #e8a03c; }
+  /* name prompt before joining */
+  #namebox { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+  #namebox form { background: rgba(24,24,24,.95); border: 1px solid #555; border-radius: 6px; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; min-width: 300px; font: 14px Verdana, Arial, sans-serif; color: #ddd; }
+  #namebox input { font: 16px Verdana, Arial, sans-serif; padding: 6px 8px; background: #111; color: #fff; border: 1px solid #666; }
+  #namebox button { font: bold 14px Verdana, Arial, sans-serif; padding: 7px; background: #c8902a; color: #111; border: 0; cursor: pointer; }
+    padding: 16px 20px; min-width: 300px; flex-direction: column; gap: 10px; font: 14px Verdana, Arial, sans-serif; color: #ddd; }
+  /* CS:S main menu: logo top left, text buttons with a fading highlight bar, over the live game */
+  #mainmenu { position: fixed; inset: 0; z-index: 25; display: none; background: linear-gradient(90deg, rgba(0,0,0,.62) 0%, rgba(0,0,0,.38) 38%, rgba(0,0,0,.08) 70%); font-family: Verdana, Tahoma, Arial, sans-serif; color: #e9e9e9; } /* in game: your own view behind it */
+  #mainmenu.title { background: linear-gradient(90deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,.25) 40%, rgba(0,0,0,0) 70%), url(ui/menu_bg.png) center / cover, #000; } /* before joining: the artwork */
+  .mm-logo { position: absolute; left: 5%; top: 21%; display: flex; flex-direction: column; align-items: flex-end; width: max-content; }
+  .mm-logo b { font: normal 74px 'Counter-Strike Logo'; color: #fff; letter-spacing: 1px; text-shadow: 0 2px 10px rgba(0,0,0,.45); line-height: 1; }
+  .mm-logo span { font: 34px Verdana, Arial, sans-serif; letter-spacing: 9px; color: #c9c9c9; margin-top: 4px; }
+  .mm-items { position: absolute; left: calc(5% - 18px); top: 43%; display: flex; flex-direction: column; gap: 6px; }
+  .mm-item { width: 440px; padding: 9px 18px; font-size: 22px; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  .mm-item:hover { background: linear-gradient(90deg, rgba(255,255,255,.30), rgba(255,255,255,.12) 70%, rgba(255,255,255,0)); color: #fff; }
+  body.inmenu :is(#radar, .panel, #roundbar, #money, #deathmsg, #feed, #wsel, #cross, #c4icon, #actbar, #scope) { display: none !important; }
+  /* Options / name windows: CS:S's olive VGUI */
+  .mm-win { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(640px, 94vw); background: #4c5844; border: 1px solid #889180; box-shadow: 0 0 0 1px #292c21, 0 8px 30px rgba(0,0,0,.6); font: 13px Tahoma, Verdana, sans-serif; color: #d8ded3; }
+  .vg-title { padding: 8px 12px; font-weight: bold; color: #f0f0e8; display: flex; justify-content: space-between; } .vg-title i { font-style: normal; cursor: pointer; color: #b8bfb2; }
+  .vg-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid #889180; } .vg-tabs span { padding: 5px 14px; background: #3e4637; border: 1px solid #889180; border-bottom: 0; cursor: pointer; color: #b8bfb2; }
+  .vg-tabs span.on { background: #4c5844; color: #f0f0e8; position: relative; top: 1px; }
+  .vg-body { padding: 10px 14px; } .vg-page { padding: 14px 6px; min-height: 160px; display: flex; flex-direction: column; gap: 12px; }
+  .vg-row { display: grid; grid-template-columns: 180px 1fr 54px; align-items: center; gap: 10px; } .vg-row output { text-align: right; color: #f0f0e8; }
+  .vg-check { grid-template-columns: 20px 1fr; } .vg-row select, .vg-text { background: #3e4637; color: #f0f0e8; border: 1px solid #889180; padding: 3px 6px; font: inherit; }
+  .vg-row input[type=range] { accent-color: #c4b550; }
+  .vg-page { max-height: 62vh; overflow-y: auto; }
+  .vg-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; } .vg-key { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .vg-key button, .vg-note button { min-width: 110px; padding: 2px 8px; background: #3e4637; color: #f0f0e8; border: 1px solid #889180; font: inherit; cursor: pointer; } .vg-key button.wait { background: #c4b550; color: #222; }
+  .vg-players { border: 1px solid #889180; background: #3e4637; max-height: 160px; overflow-y: auto; }
+  .vg-player { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 3px 8px; } .vg-player small { color: #b8bfb2; }
+  .vg-player button { padding: 1px 10px; background: #4c5844; color: #f0f0e8; border: 1px solid; border-color: #889180 #292c21 #292c21 #889180; font: inherit; cursor: pointer; }
+  .vg-admin, .vg-status { white-space: nowrap; color: #f0e080; }
+  .vg-note { grid-template-columns: 1fr auto; color: #b8bfb2; font-size: 12px; }
+  .vg-xh { display: grid; grid-template-columns: 1fr 130px; gap: 14px; } .vg-xh > div:first-child { display: flex; flex-direction: column; gap: 10px; }
+  .vg-row input[type=color] { width: 60px; height: 24px; border: 1px solid #889180; background: none; padding: 0; }
+  .vg-previewbox { position: relative; height: 130px; align-self: start; background: #6b6455 radial-gradient(#8a8270, #4a4538); border: 1px solid #889180; }
+  .vg-preview { position: absolute; left: 50%; top: 50%; }
+  .vg-buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 0 14px 12px; }
+  .vg-buttons button { min-width: 78px; padding: 4px 12px; background: #4c5844; color: #f0f0e8; border: 1px solid; border-color: #889180 #292c21 #292c21 #889180; font: inherit; cursor: pointer; } .vg-buttons button:hover { background: #5a684f; }
+  #netwarn { position: fixed; right: 14px; top: 12px; z-index: 8; display: none; pointer-events: none; text-align: right; white-space: pre; font: 15px Verdana, Tahoma, Arial, sans-serif; color: #e02020; text-shadow: 1px 1px 1px #000; } /* CS:S's connection-problem warning */
+  #notice { position: fixed; left: 50%; top: 16%; transform: translateX(-50%); z-index: 7; opacity: 0; transition: opacity .3s; pointer-events: none; font: bold 16px 'Trebuchet MS', Arial, sans-serif; color: #ffd27a; background: rgba(0,0,0,.6); padding: 8px 16px; border-radius: 4px; white-space: nowrap; }
+  .dmg { position: fixed; pointer-events: none; z-index: 2; opacity: 0; }
+  #dmg-top { left: 18%; right: 18%; top: 0; height: 26%; background: radial-gradient(ellipse at 50% 0%, rgba(210,0,0,.75), rgba(160,0,0,.25) 45%, transparent 72%); }
+  #dmg-bottom { left: 18%; right: 18%; bottom: 0; height: 26%; background: radial-gradient(ellipse at 50% 100%, rgba(210,0,0,.75), rgba(160,0,0,.25) 45%, transparent 72%); }
+  #dmg-left { top: 15%; bottom: 15%; left: 0; width: 22%; background: radial-gradient(ellipse at 0% 50%, rgba(210,0,0,.75), rgba(160,0,0,.25) 45%, transparent 72%); }
+  #dmg-right { top: 15%; bottom: 15%; right: 0; width: 22%; background: radial-gradient(ellipse at 100% 50%, rgba(210,0,0,.75), rgba(160,0,0,.25) 45%, transparent 72%); }
+  #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 4; }
+  #healthbox { left: 14px; } #armorbox { left: 200px; } #ammobox { right: 14px; }
+  #reserve { font-size: 24px; }
+  /* loading screen: the white CS agent (logo font) centred on black, the progress bar under it */
+  #loading { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; background: #000; transition: opacity .4s; }
+  #loading .agent { font: 220px/1 'Counter-Strike Logo'; color: #fff; }
+  #loading .bar { width: min(320px, calc(100% - 32px)); height: 4px; background: #ffffff22; }
+  #loadfill { height: 100%; width: 0; background: #fff; transition: width .25s; }
+  #info { position: fixed; left: 50%; transform: translateX(-50%); bottom: 64px; font-size: 11px; opacity: .7; text-shadow: 1px 1px #000; white-space: pre; display: none; }
+</style>
+<div id="loading">
+  <span class="agent">-</span><!-- the agent glyph of the CS logo font (cslogo.ttf) -->
+  <div class="bar"><div id="loadfill"></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="devpanel"></div><div id="debugout"></div><div id="scope"><div class="box"><i class="arc tl"></i><i class="arc tr"></i><i class="arc bl"></i><i class="arc br"></i></div></div>
+<canvas id="radar"></canvas>
+<div id="roundbar"><div class="row"><div class="team ct"><b id="standct">5</b><small>CT STANDING</small></div><span id="clockbomb" class="glyph">d</span><span id="clockicon" class="glyph">e</span><div id="roundtime">1:55</div><div class="team t"><b id="standt">5</b><small>T STANDING</small></div></div><div id="roundscore"></div></div><div id="banner"></div><div id="feed"></div>
+<div class="panel hudfont" id="healthbox"><span class="glyph">b</span><span class="num" id="health"></span></div>
+<div class="panel hudfont" id="armorbox"><span class="glyph" id="armoricon">a</span><span class="num" id="armor"></span></div>
+<div class="panel hudfont" id="ammobox"><span class="num" id="ammo"></span><div class="sep"></div><span class="num" id="reserve"></span><img src="ui/icons/bullet.png" alt=""></div>
+<div class="hudfont" id="money"></div><span id="c4icon" class="glyph">d</span><div id="actbar"><div id="acttext"></div><div class="track"><div id="actfill"></div></div></div><div id="wsel"></div><div id="buymenu"></div><div id="flash"></div><div class="dmg" id="dmg-top"></div><div class="dmg" id="dmg-bottom"></div><div class="dmg" id="dmg-left"></div><div class="dmg" id="dmg-right"></div><div id="notice"></div><div id="scoreboard"></div><div id="netwarn"></div><div id="deathmsg"></div><div id="hurt"></div><div id="info"></div>
+<script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
+<script type="module">
+  // the server decides the map (server.config.json); ask which one, then start the game
+  const info = await fetch('/api/info').then((r) => r.json()).catch(() => ({ map: 'de_dust2' }));
+  window.__map = info.map; window.__mode = info.mode;
+  // your name (remembered; the main menu asks for it on the first JOIN GAME, Options > Multiplayer changes it)
+  let saved = ''; try { saved = localStorage.getItem('playerName') ?? ''; } catch {}
+  window.__name = saved || 'Player';
+  import('./game.js');
+</script>
