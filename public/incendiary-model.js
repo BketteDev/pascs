@@ -1,24 +1,37 @@
 import * as THREE from 'three';
 
 const templates = new Map();
-// Original low-poly models; shared geometry keeps thrown and held bottles inexpensive.
-export function createIncendiaryModel(key) {
-  if (!templates.has(key)) {
-    const model = new THREE.Group(), bottle = key === 'molotov';
-    const part = (geometry, color, y, z = 0) => {
-      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color }));
-      mesh.position.set(0, y, z); model.add(mesh); return mesh;
-    };
-    part(new THREE.CylinderGeometry(bottle ? 1.8 : 2.5, bottle ? 2.2 : 2.5, 8, 10), bottle ? 0x52632d : 0xa63e25, 0);
-    part(new THREE.CylinderGeometry(bottle ? 0.8 : 2, bottle ? 1.8 : 2, 2, 10), bottle ? 0x637337 : 0x514d42, 5);
-    part(new THREE.CylinderGeometry(0.75, 0.75, 2, 8), 0x716240, 6.5);
-    part(new THREE.CylinderGeometry(bottle ? 2.23 : 2.53, bottle ? 2.23 : 2.53, 2.5, 10), bottle ? 0xc6b58c : 0xe6bc6c, -0.5);
-    if (bottle) {
-      const wick = part(new THREE.BoxGeometry(1.1, 3, 0.8), 0xbfa784, 8);
-      wick.rotation.z = -0.4;
-      part(new THREE.ConeGeometry(0.8, 2.6, 6), 0xffa43d, 10);
-    } else part(new THREE.BoxGeometry(1, 2, 1), 0x282b26, 7);
+const ASSETS = 'equipment-models/';
+let loading;
+
+export function loadIncendiaryModels(loadTex) {
+  loading ??= fetch(ASSETS + 'models.json').then((r) => r.json()).then((models) => Promise.all(Object.entries(models).map(async ([key, parts]) => {
+    const response = await fetch(ASSETS + key + '.bin');
+    if (!response.ok) throw new Error(`Unable to load ${key} model (${response.status})`);
+    const bin = await response.arrayBuffer(), model = new THREE.Group();
+    for (const m of parts) {
+      const geo = new THREE.BufferGeometry();
+      const normals = new Float32Array(bin, m.nrm, m.count * 3);
+      const colors = new Float32Array(normals.length);
+      // The viewmodel scene has no lights. Bake a little directional shading into the original mesh.
+      for (let i = 0; i < normals.length; i += 3) {
+        const light = m.transparent ? 1 : 0.66 + 0.34 * Math.max(0, normals[i] * 0.35 + normals[i + 1] * 0.65 + normals[i + 2] * 0.67);
+        colors.fill(light, i, i + 3);
+      }
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bin, m.pos, m.count * 3), 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+      geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(bin, m.uv, m.count * 2), 2));
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geo.setIndex(new THREE.BufferAttribute(new Uint16Array(bin, m.idx, m.indices), 1));
+      const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: m.transparent, depthWrite: !m.transparent, side: m.transparent ? THREE.DoubleSide : THREE.FrontSide });
+      loadTex(ASSETS + m.texture, (map) => { material.map = map; material.needsUpdate = true; });
+      model.add(new THREE.Mesh(geo, material));
+    }
     templates.set(key, model);
-  }
+  })));
+  return loading;
+}
+
+export function createIncendiaryModel(key) {
   return templates.get(key).clone(true);
 }

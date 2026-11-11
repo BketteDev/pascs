@@ -2,7 +2,7 @@
 // ammo/reload, sounds, bullet decals, HUD.
 import * as THREE from 'three';
 import { WEAPONS, ORDER, GRENADES } from './weapon-defs.js';
-import { createIncendiaryModel } from './incendiary-model.js';
+import { createIncendiaryModel, loadIncendiaryModels } from './incendiary-model.js';
 import { trace } from './physics.js';
 import { march } from './ballistics.js';
 import { audio, play as playSound, playAt, preload } from './audio.js';
@@ -58,23 +58,28 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const holder = new THREE.Group(); scene.add(holder);
   const vms = {}, loading = new Map(); // key -> { group, bones, seqs, anim }
   const loadVm = (key) => {
-    if (WEAPONS[key].grenade === 'fire') {
-      if (!vms[key]) {
-        const group = createIncendiaryModel(key); group.visible = false; holder.add(group);
-        vms[key] = { group, procedural: true, anim: null };
-      }
-      return Promise.resolve(vms[key]);
-    }
-    if (!loading.has(key)) loading.set(key, fetch(`weapons/${key}.bin`).then((r) => r.arrayBuffer()).then((bin) => {
-      const info = manifest[key];
+    const fire = WEAPONS[key].grenade === 'fire', source = fire ? 'smokegrenade' : key;
+    if (!loading.has(key)) loading.set(key, fetch(`weapons/${source}.bin`).then((r) => r.arrayBuffer()).then(async (bin) => {
+      if (fire) await loadIncendiaryModels(loadTex);
+      const info = manifest[source];
       const group = new THREE.Group(); group.visible = false;
-      group.matrixAutoUpdate = false; group.matrix.copy(WEAPONS[key].rightHanded ? MODEL_TO_CAMERA_RH : MODEL_TO_CAMERA);
+      group.matrixAutoUpdate = false; group.matrix.copy(WEAPONS[source].rightHanded ? MODEL_TO_CAMERA_RH : MODEL_TO_CAMERA);
       // bones carry the baked skinning matrices directly (boneInverse = identity)
       const bones = Array.from({ length: info.bones }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; });
       const skeleton = new THREE.Skeleton(bones);
+      let incendiary;
       for (const m of info.meshes) {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bin, m.pos, m.count * 3), 3));
+        if (fire && m === info.meshes[0]) {
+          // The smoke grenade's item mesh is skinned entirely to bone 0; keep its animated hands.
+          const model = createIncendiaryModel(key);
+          model.rotation.x = Math.PI / 2;
+          geo.computeBoundingBox(); geo.boundingBox.getCenter(model.position);
+          incendiary = new THREE.Group(); incendiary.matrixAutoUpdate = false;
+          incendiary.add(model); group.add(incendiary);
+          continue;
+        }
         geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(bin, m.nrm, m.count * 3), 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(bin, m.uv, m.count * 2), 2));
         geo.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array(bin, m.bw, m.count * 4), 4));
@@ -91,7 +96,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       holder.add(group);
       const snd = WEAPONS[key].sounds; // fire / empty / deploy / reload / ... decoded now, not on first use
       preload(...Object.values(snd).flatMap((v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? (typeof v[1] === 'string' && !Array.isArray(v[0]) ? [v[1]] : v.map((x) => x[1])) : [])).map((n) => 'weapons/' + n));
-      return (vms[key] = { group, bones, seqs, anim: null });
+      return (vms[key] = { group, bones, seqs, incendiary, anim: null });
     }));
     return loading.get(key);
   };
@@ -107,7 +112,6 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   // ---------- view model animation (baked sequences, chosen by activity like the engine) ----------
   const findSeqs = (vm, act) => vm.seqs.filter((q) => q.activity === act);
   function playAct(key, act, fallback) {
-    if (vms[key].procedural) { vms[key].anim = { act, start: performance.now() / 1000 }; return 0.7; }
     const vm = vms[key], sil = WEAPONS[key].silenced ? findSeqs(vm, act + '_SILENCED') : []; // the USP-S plays its suppressed sequences
     const list = sil.length ? sil : findSeqs(vm, act).length ? findSeqs(vm, act) : findSeqs(vm, fallback ?? '');
     if (!list.length) return 0;
@@ -118,15 +122,6 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const muzzle = new THREE.Vector3();
   function poseViewModel(key, t) { // write interpolated skinning matrices into the bones; returns muzzle (model space) or null
     const vm = vms[key];
-    if (vm.procedural) {
-      const elapsed = t - (vm.anim?.start ?? t), throwing = vm.anim?.act === 'ACT_VM_THROW';
-      const draw = vm.anim?.act === 'ACT_VM_DRAW' ? Math.max(0, 1 - elapsed / 0.5) : 0;
-      const swing = throwing ? Math.sin(Math.min(elapsed / 0.4, 1) * Math.PI) : 0;
-      vm.group.position.set(7, -8 - draw * 14 + swing * 4, -22 - swing * 7);
-      vm.group.rotation.set(-0.1 - swing, 0, -0.25);
-      vm.group.visible = !throwing || elapsed < 0.22;
-      return null;
-    }
     if (!vm.anim || (!(s.pin && key === s.cur) && !vm.anim.seq.loop && (t - vm.anim.start) * vm.anim.seq.fps >= vm.anim.seq.frames - 1)) {
       if (!vm.anim || !vm.anim.seq.activity.startsWith('ACT_VM_IDLE')) playAct(key, 'ACT_VM_IDLE');
     }
@@ -140,6 +135,11 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       // Source 3x4 row-major -> three column-major 4x4
       for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) e[c * 4 + r] = S[a + r * 4 + c] + (S[b + r * 4 + c] - S[a + r * 4 + c]) * w;
       e[3] = e[7] = e[11] = 0; e[15] = 1;
+    }
+    if (vm.incendiary) {
+      vm.incendiary.matrix.copy(vm.bones[0].matrixWorld);
+      vm.incendiary.matrixWorldNeedsUpdate = true;
+      vm.incendiary.visible = seq.activity !== 'ACT_VM_THROW' || t - start < 0.22;
     }
     if (!seq.attach) return null;
     const P = seq.attach;

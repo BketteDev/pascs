@@ -24,7 +24,6 @@ assert(canCarryGrenade({ flashbang: 1 }, 'flashbang'), 'two flashes allowed');
 for (const [key, team, price] of [['molotov', 't', 400], ['incgrenade', 'ct', 600]]) {
   const item = BUY.flatMap((c) => c.items).find((i) => i.id === key);
   assert.equal(item.team, team); assert.equal(item.price, price);
-  assert(createIncendiaryModel(key).children.length >= 5, 'original procedural model is available without asset rebuild');
 }
 assert.equal(detonates('fire', { age: 0.2, impactNormal: [0, 0, 1] }), true);
 assert.equal(detonates('fire', { age: 0.2, impactNormal: [1, 0, 0] }), false, 'walls bounce');
@@ -53,7 +52,13 @@ const originalDocument = globalThis.document, originalFetch = globalThis.fetch;
 try {
   globalThis.document = { createElement: () => ({ getContext: () => ({ createRadialGradient: () => ({ addColorStop() {} }), fillRect() {} }) }) };
   globalThis.fetch = async (name) => new Response(fs.readFileSync(path.join(import.meta.dirname, 'public', name)));
-  const root = new THREE.Group(), effects = await createGrenades({ worldRoot: root, loadTex() {} });
+  const loadTex = (name, apply) => { const texture = new THREE.Texture(); texture.name = name; apply(texture); };
+  const root = new THREE.Group(), effects = await createGrenades({ worldRoot: root, loadTex });
+  for (const key of ['molotov', 'incgrenade']) {
+    const model = createIncendiaryModel(key);
+    assert(model.children.length > 0 && model.children.every((mesh) =>
+      mesh.geometry.index.count > 0 && mesh.material.map.name.startsWith(`equipment-models/${key}-`)), 'textured CS2 mesh loaded');
+  }
   effects.sync([{ id: 1, w: 'molotov', o: [0, 0, 10] }, { id: 2, w: 'incgrenade', o: [50, 0, 10] }], [], [{ id: 3, cells, age: 1 }]);
   effects.update(1 / 60); assert(root.children.some((c) => c.isSprite), 'fire sprites are constructed');
   const sprites = root.children.filter((c) => c.isSprite); let disposed = 0;

@@ -1,0 +1,46 @@
+{
+  "molotov": [
+    {
+      "count": 5275,
+      "indices": 20769,
+      "pos": 0,
+      "nrm": 63300,
+      "uv": 126600,
+      "idx": 168800,
+      "texture": "molotov-0.png",
+      "transparent": false
+    },
+    {
+      "count": 4,
+      "indices": 6,
+      "pos": 210340,
+      "nrm": 210388,
+      "uv": 210436,
+      "idx": 210468,
+      "texture": "molotov-1.png",
+      "transparent": true
+    },
+    {
+      "count": 1111,
+      "indices": 5964,
+      "pos": 210480,
+      "nrm": 223812,
+      "uv": 237144,
+      "idx": 246032,
+      "texture": "molotov-2.png",
+      "transparent": false
+    }
+  ],
+  "incgrenade": [
+    {
+      "count": 7773,
+      "indices": 33363,
+      "pos": 0,
+      "nrm": 93276,
+      "uv": 186552,
+      "idx": 248736,
+      "texture": "incgrenade-0.png",
+      "transparent": false
+    }
+  ]
+}

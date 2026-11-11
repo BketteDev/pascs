@@ -2,7 +2,7 @@
 // Everything is driven by server snapshots: `sync(gr, smokes)` every snapshot, `pop(ev)` on an explode event, `update(dt)` per frame.
 import * as THREE from 'three';
 import { GRENADE, GRENADES, WEAPONS } from './weapon-defs.js';
-import { createIncendiaryModel } from './incendiary-model.js';
+import { createIncendiaryModel, loadIncendiaryModels } from './incendiary-model.js';
 
 const KEYS = GRENADES.filter((key) => WEAPONS[key].model);
 const blob = (stops) => { // soft round sprite texture
@@ -12,7 +12,7 @@ const blob = (stops) => { // soft round sprite texture
 };
 
 export async function createGrenades({ worldRoot, loadTex }) {
-  const manifest = await fetch('weapons/weapons.json').then((r) => r.json());
+  const [manifest] = await Promise.all([fetch('weapons/weapons.json').then((r) => r.json()), loadIncendiaryModels(loadTex)]);
   const geos = {}, mats = {};
   await Promise.all(KEYS.map(async (k) => {
     const m = manifest[k]?.world?.[0]; if (!m) return;
