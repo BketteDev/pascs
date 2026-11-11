@@ -87,6 +87,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
           incendiary = new THREE.Group(); incendiary.matrixAutoUpdate = false;
           incendiary.add(model); group.add(incendiary);
           if (key === 'molotov') {
+            model.scale.setScalar(0.4);
             const lighter = createIncendiaryModel('lighter'), socket = new THREE.Group();
             const spark = lighter.children.find((mesh) => mesh.material.transparent);
             lighter.scale.setScalar(0.62);
