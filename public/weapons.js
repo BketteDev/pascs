@@ -10,6 +10,14 @@ import { is } from './binds.js';
 
 const rad = Math.PI / 180;
 const VM_FOV = 54; // viewmodel_fov (horizontal degrees at 4:3, like the world fov)
+const LIGHT_FRAME = 0.16, LIGHT_TIME = 0.28;
+// Smoke viewmodel left hand (bone 7), from the Source bind pose.
+const LEFT_HAND_BIND = new THREE.Matrix4().set(
+  0.05580, -0.99121, 0.11992, -12.551,
+  0.99696, 0.06185, 0.04737, -5.97416,
+  -0.05437, 0.11692, 0.99165, 0.57934,
+  0, 0, 0, 1,
+).invert();
 
 // CS:S view models are authored left-handed (x forward, y left, z up) and mirrored for cl_righthand 1:
 // three camera space = (right = +y, up = +z, back = -x). Determinant -1, three flips the winding for us.
@@ -67,7 +75,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       // bones carry the baked skinning matrices directly (boneInverse = identity)
       const bones = Array.from({ length: info.bones }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; });
       const skeleton = new THREE.Skeleton(bones);
-      let incendiary;
+      let incendiary, ignition;
       for (const m of info.meshes) {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bin, m.pos, m.count * 3), 3));
@@ -78,6 +86,20 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
           geo.computeBoundingBox(); geo.boundingBox.getCenter(model.position);
           incendiary = new THREE.Group(); incendiary.matrixAutoUpdate = false;
           incendiary.add(model); group.add(incendiary);
+          if (key === 'molotov') {
+            const lighter = createIncendiaryModel('lighter'), socket = new THREE.Group();
+            const spark = lighter.children.find((mesh) => mesh.material.transparent);
+            lighter.scale.setScalar(0.62);
+            lighter.rotation.x = Math.PI / 2;
+            lighter.position.set(1.7, -0.2, 0.3).applyMatrix4(LEFT_HAND_BIND);
+            socket.matrixAutoUpdate = false; socket.visible = false;
+            socket.add(lighter); group.add(socket);
+            const wick = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
+            wick.position.set(2.15, 8.3, -0.2); wick.scale.set(2.7, 3.6, 1); wick.visible = false;
+            loadTex('equipment-models/molotov-1.png', (map) => { wick.material.map = map; wick.material.needsUpdate = true; });
+            model.add(wick);
+            ignition = { socket, spark, wick };
+          }
           continue;
         }
         geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(bin, m.nrm, m.count * 3), 3));
@@ -93,10 +115,14 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
         group.add(mesh);
       }
       const seqs = info.sequences.map((q) => ({ ...q, skin: new Float32Array(bin, q.skin, q.frames * info.bones * 12), attach: q.attach >= 0 ? new Float32Array(bin, q.attach, q.frames * 3) : null }));
+      if (ignition) {
+        const reach = seqs.find((q) => q.activity === 'ACT_VM_PULLPIN');
+        seqs.push({ ...reach, frames: Math.min(24, reach.frames), loop: false, activity: 'ACT_VM_LIGHT' });
+      }
       holder.add(group);
       const snd = WEAPONS[key].sounds; // fire / empty / deploy / reload / ... decoded now, not on first use
       preload(...Object.values(snd).flatMap((v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? (typeof v[1] === 'string' && !Array.isArray(v[0]) ? [v[1]] : v.map((x) => x[1])) : [])).map((n) => 'weapons/' + n));
-      return (vms[key] = { group, bones, seqs, incendiary, anim: null });
+      return (vms[key] = { group, bones, seqs, incendiary, ignition, anim: null });
     }));
     return loading.get(key);
   };
@@ -140,6 +166,18 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       vm.incendiary.matrix.copy(vm.bones[0].matrixWorld);
       vm.incendiary.matrixWorldNeedsUpdate = true;
       vm.incendiary.visible = seq.activity !== 'ACT_VM_THROW' || t - start < 0.22;
+    }
+    if (vm.ignition) {
+      const { socket, spark, wick } = vm.ignition, elapsed = t - start;
+      const lighting = seq.activity === 'ACT_VM_LIGHT', lit = lighting && elapsed >= LIGHT_FRAME;
+      socket.visible = lighting;
+      if (lighting) {
+        socket.matrix.copy(vm.bones[7].matrixWorld);
+        socket.matrixWorldNeedsUpdate = true;
+      }
+      spark.visible = lit && elapsed < 0.48;
+      wick.visible = lit || seq.activity === 'ACT_VM_THROW';
+      if (lit && !vm.anim.ignited) { vm.anim.ignited = true; play(WEAPONS[key].sounds.light, 0.55); }
     }
     if (!seq.attach) return null;
     const P = seq.attach;
@@ -417,10 +455,22 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   }
 
   function startPin(button) { // grenade: hold to keep the pin pulled, release to throw (LMB = full throw, RMB = lob)
-    s.pin = { button, power: button === 0 ? 1 : 0.45 };
-    playAct(s.cur, 'ACT_VM_PULLPIN'); if (def().sounds.pin) play(def().sounds.pin, 0.5);
+    s.pin = { button, power: button === 0 ? 1 : 0.45, started: now() };
+    playAct(s.cur, s.cur === 'molotov' ? 'ACT_VM_LIGHT' : 'ACT_VM_PULLPIN');
+    if (def().sounds.pin) play(def().sounds.pin, 0.5);
   }
   function release() {
+    const pin = s.pin, delay = s.cur === 'molotov' ? LIGHT_TIME - (now() - pin.started) : 0;
+    if (delay > 0) {
+      if (!pin.queued) {
+        pin.queued = true;
+        setTimeout(() => { if (s.pin === pin && alive() && document.pointerLockElement) finishThrow(); }, delay * 1000);
+      }
+      return;
+    }
+    finishThrow();
+  }
+  function finishThrow() {
     const key = s.cur, power = s.pin.power;
     s.pin = null; const pendingThrow = s.throwing = { end: now() + 0.7 };
     playAct(key, 'ACT_VM_THROW');

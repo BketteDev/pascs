@@ -5,8 +5,9 @@ const ASSETS = 'equipment-models/';
 let loading;
 
 export function loadIncendiaryModels(loadTex) {
-  loading ??= fetch(ASSETS + 'models.json').then((r) => r.json()).then((models) => Promise.all(Object.entries(models).map(async ([key, parts]) => {
-    const response = await fetch(ASSETS + key + '.bin');
+  loading ??= fetch(ASSETS + 'models-v2.json').then((r) => r.json()).then((models) => Promise.all(Object.entries(models).map(async ([key, parts]) => {
+    const file = key === 'molotov' ? 'molotov-body' : key === 'lighter' ? 'molotov-lighter' : key;
+    const response = await fetch(ASSETS + file + '.bin');
     if (!response.ok) throw new Error(`Unable to load ${key} model (${response.status})`);
     const bin = await response.arrayBuffer(), model = new THREE.Group();
     for (const m of parts) {
@@ -33,5 +34,7 @@ export function loadIncendiaryModels(loadTex) {
 }
 
 export function createIncendiaryModel(key) {
-  return templates.get(key).clone(true);
+  const model = templates.get(key).clone(true);
+  if (key === 'molotov') model.scale.setScalar(1 / 3);
+  return model;
 }

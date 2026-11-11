@@ -90,6 +90,13 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     return bones;
   };
 
+  // Use the authored CS:S grenade grip instead of guessing axes in the player's hand bone.
+  const handName = 'ValveBiped.Bip01_R_Hand', smoke = info.weapons.smokegrenade;
+  const smokeBounds = new THREE.Box3(), partBounds = new THREE.Box3(), fireGrip = new THREE.Matrix4();
+  for (const m of smoke.meshes) smokeBounds.union(partBounds.setFromBufferAttribute(geometryFor(m).attributes.position));
+  toThree(smoke.bones.find((b) => b.name === handName).poseToBone, 0, fireGrip.elements);
+  fireGrip.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2).setPosition(smokeBounds.getCenter(new THREE.Vector3())));
+
   // soft blob shadow on the floor under each character (the lightmaps only hold the static world)
   const shadowTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 2, 32, 32, 31); gr.addColorStop(0, 'rgba(0,0,0,0.55)'); gr.addColorStop(0.6, 'rgba(0,0,0,0.25)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
   const shadowMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 });
@@ -130,10 +137,10 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     bot.fireHand = null;
     if (fire) {
       const socket = new THREE.Group(), model = createIncendiaryModel(key);
-      model.rotation.x = Math.PI / 2; model.position.set(2, 0, -2); socket.add(model);
+      model.applyMatrix4(fireGrip); socket.add(model);
       socket.matrixAutoUpdate = false; socket.visible = !bot.dead; bot.group.add(socket);
       const wbones = []; wbones.meshes = [socket];
-      Object.assign(bot, { weaponKey: key, wdef: { bones: [] }, wbones, fireHand: { socket, hand: bot.def.bones.findIndex((b) => b.name === 'ValveBiped.Bip01_R_Hand') } });
+      Object.assign(bot, { weaponKey: key, wdef: { bones: [] }, wbones, fireHand: { socket, hand: bot.def.bones.findIndex((b) => b.name === handName) } });
       return;
     }
     const wdef = info.weapons[key];
@@ -353,7 +360,11 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
 
   function skin(bot) { // bot.world (bone -> model space) -> skinning matrices, then bone-merge the rifle
     const W = bot.world, t = bot.tmp, bones = bot.def.bones;
-    if (bot.fireHand?.hand >= 0) toThree(W, bot.fireHand.hand * 12, bot.fireHand.socket.matrix.elements);
+    if (bot.fireHand?.hand >= 0) {
+      const { socket, hand } = bot.fireHand;
+      toThree(W, hand * 12, socket.matrix.elements);
+      socket.matrixWorldNeedsUpdate = true;
+    }
     for (let i = 0; i < bones.length; i++) {
       mul34(W, i * 12, bones[i].poseToBone, 0, t, 0);
       toThree(t, 0, bot.bones[i].matrixWorld.elements);

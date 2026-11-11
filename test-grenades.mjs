@@ -56,11 +56,17 @@ try {
   const root = new THREE.Group(), effects = await createGrenades({ worldRoot: root, loadTex });
   for (const key of ['molotov', 'incgrenade']) {
     const model = createIncendiaryModel(key);
+    assert.equal(model.scale.x, key === 'molotov' ? 1 / 3 : 1);
     assert(model.children.length > 0 && model.children.every((mesh) =>
       mesh.geometry.index.count > 0 && mesh.material.map.name.startsWith(`equipment-models/${key}-`)), 'textured CS2 mesh loaded');
   }
   effects.sync([{ id: 1, w: 'molotov', o: [0, 0, 10] }, { id: 2, w: 'incgrenade', o: [50, 0, 10] }], [], [{ id: 3, cells, age: 1 }]);
   effects.update(1 / 60); assert(root.children.some((c) => c.isSprite), 'fire sprites are constructed');
+  const flame = root.children.find((c) => c.isSprite && c.material.map.name === 'equipment-models/ground-fire.png');
+  assert(flame, 'ground fire uses the flame atlas');
+  const frame = flame.material.map;
+  effects.update(0.12);
+  assert.notEqual(flame.material.map, frame, 'ground fire advances frames');
   const sprites = root.children.filter((c) => c.isSprite); let disposed = 0;
   for (const sp of sprites) sp.material.addEventListener('dispose', () => disposed++);
   effects.sync([], [], []); assert.equal(root.children.length, 0); assert.equal(disposed, sprites.length, 'spent flame materials are disposed');
