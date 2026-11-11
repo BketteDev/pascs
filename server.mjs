@@ -10,14 +10,39 @@ import { createGame } from './server/game.mjs';
 
 const pub = path.join(import.meta.dirname, 'public');
 const vendor = path.join(import.meta.dirname, 'node_modules', 'three', 'build');
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.mp3': 'audio/mpeg' };
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.mp3': 'audio/mpeg' };
+
+// A different path for each release also versions every relative module import.
+const clientFiles = new Set(fs.readdirSync(pub, { withFileTypes: true })
+  .filter((file) => file.isFile() && file.name.endsWith('.js')).map((file) => file.name).sort());
+const clientHash = crypto.createHash('sha256');
+for (const name of clientFiles) clientHash.update(name).update('\0').update(fs.readFileSync(path.join(pub, name))).update('\0');
+const clientPrefix = `/client/${clientHash.digest('hex').slice(0, 16)}/`;
+const indexHtml = Buffer.from(fs.readFileSync(path.join(pub, 'index.html'), 'utf8')
+  .replace("import('./game.js')", `import('${clientPrefix}game.js')`));
+const indexGzip = zlib.gzipSync(indexHtml);
+const indexHeaders = {
+  'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding',
+  ETag: `"${crypto.createHash('sha256').update(indexHtml).digest('hex')}"`,
+};
 
 const server = http.createServer((req, res) => {
   const url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (url === '/api/maps') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(builtMaps()));
   if (url === '/api/admin' && req.method === 'POST') return admin(req, res);
   if (url === '/api/info') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ map: config.map, mode: config.mode ?? 'classic', teamSize: game.teamSize, maxPlayers: game.maxPlayers }));
-  const [dir, rel] = url.startsWith('/vendor/') ? [vendor, url.slice(8)] : [pub, url === '/' ? 'index.html' : url];
+  if (url === '/' || url === '/index.html') {
+    if (req.headers['if-none-match'] === indexHeaders.ETag) return res.writeHead(304, indexHeaders).end();
+    const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
+    const body = gzip ? indexGzip : indexHtml;
+    return res.writeHead(200, { ...indexHeaders, 'Content-Length': body.length, ...(gzip && { 'Content-Encoding': 'gzip' }) }).end(body);
+  }
+  if (url.startsWith(clientPrefix)) {
+    const name = url.slice(clientPrefix.length);
+    if (clientFiles.has(name)) return serve(req, res, path.join(pub, name));
+    return res.writeHead(404).end('not found');
+  }
+  const [dir, rel] = url.startsWith('/vendor/') ? [vendor, url.slice(8)] : [pub, url];
   const file = path.join(dir, rel);
   if (!file.startsWith(dir)) return res.writeHead(403).end(); // block ../ escapes
   serve(req, res, file);
