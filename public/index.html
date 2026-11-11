@@ -62,9 +62,9 @@
   #wsel .w { display: flex; align-items: center; gap: 10px; min-width: 130px; justify-content: flex-end; padding: 5px 12px; background: rgba(0,0,0,.35); border: 1px solid transparent; border-radius: 4px; }
   #wsel .w.cur { background: rgba(255,176,0,.22); border-color: rgba(255,176,0,.8); } #wsel .w span { margin-right: auto; opacity: .8; } #wsel img { height: 28px; filter: sepia(1) saturate(6) hue-rotate(-12deg); }
   #buymenu { position: fixed; inset: 0; display: none; z-index: 3; pointer-events: none; text-align: center; }
-  #buymenu svg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 96vmin; max-height: 96vmin; font-family: Verdana, Tahoma, sans-serif; }
+  #buymenu > svg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 96vmin; max-height: 96vmin; font-family: Verdana, Tahoma, sans-serif; }
   #buymenu .disc { fill: rgba(24,26,30,.74); stroke: rgba(255,255,255,.35); stroke-width: 2; }
-  #buymenu path { fill: transparent; transition: fill .06s; } #buymenu .hot path { fill: rgba(255,255,255,.16); } #buymenu .off { opacity: .4; }
+  #buymenu .wedge { fill: transparent; transition: fill .06s; } #buymenu .hot > .wedge { fill: rgba(255,255,255,.16); } #buymenu .off { opacity: .4; }
   #buymenu .sep { stroke: rgba(255,255,255,.38); stroke-width: 1.5; }
   #buymenu text { text-anchor: middle; fill: #f0f0f0; } #buymenu .nm { font-size: 13px; font-weight: bold; } #buymenu .pr { font-size: 14px; fill: #7fd36a; font-weight: bold; } #buymenu .pr.bad { fill: #e0443a; }
   #buymenu .core { fill: rgba(16,18,22,.9); stroke: rgba(255,255,255,.3); } #buymenu .badge { fill: #2a2a2a; stroke: #c9a24a; stroke-width: 3; } #buymenu .star { fill: #d8b25a; }

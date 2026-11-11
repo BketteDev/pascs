@@ -3,6 +3,7 @@
 services:
   game:
     build: .
+    pull_policy: build
     restart: unless-stopped
     ports:
       - "${PORT:-6767}:6767"

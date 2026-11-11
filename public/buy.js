@@ -1,7 +1,7 @@
 // CS:GO-style radial buy menu (B); stays open after a purchase, right click goes back. Category ring first, then the items of one category; the mouse (pointer-locked, so we track a virtual
 // cursor from movementX/Y) picks the wedge under it, click or number key buys. The server validates every purchase.
 import { WEAPONS, BUY, canCarryGrenade } from './weapon-defs.js';
-import { FIRE_ICON } from './fire-icon.js';
+import { fireIcon } from './fire-icon.js';
 import { GLYPH, glyphMid } from './hud.js';
 import { is } from './binds.js';
 
@@ -12,7 +12,7 @@ const polar = (r, a) => [C + r * Math.sin(a), C - r * Math.cos(a)]; // a: radian
 // an item's icon: guns from CS:S's weapon icon font (csd), armour from its HUD font (t vest, u vest + helmet), a picture for the rest
 const ICON_PX = 50;
 function icon(it, x, y) {
-  if (WEAPONS[it.id]?.grenade === 'fire') return `<svg x="${x - 24}" y="${y - 24}" width="48" height="48" viewBox="0 0 32 32">${FIRE_ICON}</svg>`;
+  if (WEAPONS[it.id]?.grenade === 'fire') return fireIcon(it.id, 48, x - 24, y - 24);
   const font = it.glyph ? "'Counter-Strike'" : GLYPH[it.icon] ? 'csd' : null, ch = it.glyph ?? GLYPH[it.icon];
   if (!font) return `<image href="ui/icons/${it.icon}.png" x="${x - 52}" y="${y - 24}" width="104" height="52" preserveAspectRatio="xMidYMid meet"/>`;
   return `<text x="${x}" y="${(y + glyphMid(font, ch) * ICON_PX).toFixed(1)}" class="gl" style="font-family: ${font}; font-size: ${ICON_PX}px">${ch}</text>`;
@@ -42,7 +42,7 @@ export function createBuyMenu({ net, getState }) {
       const ok = usable(it), cls = `${ok ? '' : 'off'} ${i === hover ? 'hot' : ''}`;
       const [ix, iy] = polar((R0 + R1) / 2 + 4, mid), [bx, by] = polar(R1 - 20, mid);
       const afford = it.price == null || st.money >= it.price;
-      svg += `<g class="${cls}"><path d="M${x0} ${y0} A${R1} ${R1} 0 ${big} 1 ${x1} ${y1} L${x2} ${y2} A${R0} ${R0} 0 ${big} 0 ${x3} ${y3} Z"/>` +
+      svg += `<g class="${cls}"><path class="wedge" d="M${x0} ${y0} A${R1} ${R1} 0 ${big} 1 ${x1} ${y1} L${x2} ${y2} A${R0} ${R0} 0 ${big} 0 ${x3} ${y3} Z"/>` +
         `<text x="${ix}" y="${iy - 30}" class="nm">${it.name ?? it.label}</text>` +
         icon(it, ix, iy) +
         (it.price != null ? `<text x="${ix}" y="${iy + 42}" class="pr${afford ? '' : ' bad'}">$${it.price}</text>` : '') +
