@@ -54,7 +54,21 @@ export function createHud({ player, overview, getBots, getTeam, getBomb = () => 
   // ---------- weapon selection list (right edge, shown for a moment after switching or buying) ----------
   const wsel = $('wsel'); let wselTimer = 0;
   function showWeapons(list, cur) {
-    wsel.innerHTML = list.map((w) => `<div class="w${w.key === cur ? ' cur' : ''}"><span>${w.slot}</span>${w.icon === 'molotov' || w.icon === 'incgrenade' ? fireIcon(w.icon, 34) : w.icon === 'c4' ? glyph("'Counter-Strike'", 'd', 34) : SELECT_GLYPH[w.icon ?? 'knife'] ? glyph('csd', SELECT_GLYPH[w.icon ?? 'knife'], 34) : `<img src="ui/icons/${w.icon}.png" alt="" onerror="this.replaceWith('Knife')">`}</div>`).join('');
+    wsel.innerHTML = list.map((w) => {
+      const icon = w.icon ?? 'knife';
+      let image;
+      if (icon === 'molotov' || icon === 'incgrenade') {
+        const label = icon === 'molotov' ? 'Molotov' : 'Incendiary Grenade';
+        image = `<span class="w-fire" role="img" aria-label="${label}" style="--icon: url('/equipment-icons/${icon}.svg')"></span>`;
+      } else if (icon === 'c4') {
+        image = glyph("'Counter-Strike'", 'd', 34);
+      } else if (SELECT_GLYPH[icon]) {
+        image = glyph('csd', SELECT_GLYPH[icon], 34);
+      } else {
+        image = `<img src="ui/icons/${icon}.png" alt="" onerror="this.replaceWith('Knife')">`;
+      }
+      return `<div class="w${w.key === cur ? ' cur' : ''}"><span>${w.slot}</span>${image}</div>`;
+    }).join('');
     wsel.style.opacity = 1; clearTimeout(wselTimer); wselTimer = setTimeout(() => { wsel.style.opacity = 0; }, 2200);
   }
 
