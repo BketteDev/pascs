@@ -1,6 +1,7 @@
 // CS:GO-style radial buy menu (B); stays open after a purchase, right click goes back. Category ring first, then the items of one category; the mouse (pointer-locked, so we track a virtual
 // cursor from movementX/Y) picks the wedge under it, click or number key buys. The server validates every purchase.
-import { WEAPONS, BUY } from './weapon-defs.js';
+import { WEAPONS, BUY, canCarryGrenade } from './weapon-defs.js';
+import { FIRE_ICON } from './fire-icon.js';
 import { GLYPH, glyphMid } from './hud.js';
 import { is } from './binds.js';
 
@@ -11,6 +12,7 @@ const polar = (r, a) => [C + r * Math.sin(a), C - r * Math.cos(a)]; // a: radian
 // an item's icon: guns from CS:S's weapon icon font (csd), armour from its HUD font (t vest, u vest + helmet), a picture for the rest
 const ICON_PX = 50;
 function icon(it, x, y) {
+  if (WEAPONS[it.id]?.grenade === 'fire') return `<svg x="${x - 24}" y="${y - 24}" width="48" height="48" viewBox="0 0 32 32">${FIRE_ICON}</svg>`;
   const font = it.glyph ? "'Counter-Strike'" : GLYPH[it.icon] ? 'csd' : null, ch = it.glyph ?? GLYPH[it.icon];
   if (!font) return `<image href="ui/icons/${it.icon}.png" x="${x - 52}" y="${y - 24}" width="104" height="52" preserveAspectRatio="xMidYMid meet"/>`;
   return `<text x="${x}" y="${(y + glyphMid(font, ch) * ICON_PX).toFixed(1)}" class="gl" style="font-family: ${font}; font-size: ${ICON_PX}px">${ch}</text>`;
@@ -29,7 +31,7 @@ export function createBuyMenu({ net, getState }) {
     if (it.id === 'defuser') return !st.kit;
     if (it.id === 'vesthelm') return !(st.armor >= 100 && st.helmet);
     const w = WEAPONS[it.id];
-    return w.grenade ? (st.gr?.[it.id] ?? 0) < w.max : !st.owned.includes(it.id);
+    return w.grenade ? canCarryGrenade(st.gr ?? {}, it.id) : !st.owned.includes(it.id);
   };
   function render() {
     const list = entries(), n = list.length, step = (Math.PI * 2) / n, st = getState();

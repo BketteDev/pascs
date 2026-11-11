@@ -5,18 +5,29 @@ import path from 'path';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createGame } from './server/game.mjs';
+import { EventEmitter } from 'node:events';
 
 const game = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), botsFight: false }); // the feature tests move players around: no stray bot bullets
 const http = createServer(); const wss = new WebSocketServer({ server: http, path: '/game' });
 wss.on('connection', (ws) => game.connect(ws));
-await new Promise((r) => http.listen(0, r));
-const url = `ws://127.0.0.1:${http.address().port}/game`;
+const inProcess = process.argv.includes('--in-process');
+if (!inProcess) await new Promise((r) => http.listen(0, r));
+const url = inProcess ? null : `ws://127.0.0.1:${http.address().port}/game`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function client(name, team) {
-  const c = { snaps: 0, events: [], last: null, ws: new WebSocket(url), id: null };
+  const c = { snaps: 0, events: [], last: null, ws: inProcess ? {} : new WebSocket(url), id: null };
   c.ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.t === 'welcome') c.id = d.id; else if (d.t === 'snap') { c.snaps++; c.last = d; c.events.push(...d.ev); } };
   c.send = (o) => c.ws.send(JSON.stringify(o));
+  if (inProcess) {
+    const server = new EventEmitter(); server.readyState = 1;
+    server.send = (data) => c.ws.onmessage({ data });
+    server.ping = () => server.emit('pong');
+    c.ws.send = (data) => server.emit('message', data);
+    c.ws.close = () => { server.readyState = 3; server.emit('close'); };
+    assert(game.connect(server), 'server accepts the in-process client');
+    c.send({ t: 'join', name, team }); return Promise.resolve(c);
+  }
   return new Promise((r) => { c.ws.onopen = () => { c.send({ t: 'join', name, team }); r(c); }; });
 }
 const a = await client('Alice', 'ct'), b = await client('Bob', 't');
@@ -212,10 +223,13 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
 
 // the bomb: one T carries it; planting takes 3 s inside a site; a CT with a kit defuses in 5 s -> CT win
 {
+  // Previous combat may kill the carrier, and bots can plant while those tests run.
+  Object.assign(game.round, { phase: 'over', left: 0 }); await sleep(100);
   const carriers = [...game.ents.values()].filter((e) => e.owned.has('c4'));
   assert.strictEqual(carriers.length, 1, 'exactly one player carries the C4');
   assert.strictEqual(carriers[0].team, 't', 'a terrorist carries it');
   assert.strictEqual(game.bomb.state, 'carried');
+  await sleep(5100); // let this new round's freeze finish before testing planting
   // hand it to Bob (human T) and put him on a bombsite floor
   const bob = game.ents.get(b.id), alice = game.ents.get(a.id);
   for (const e of game.ents.values()) e.owned.delete('c4');

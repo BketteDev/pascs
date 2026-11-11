@@ -12,9 +12,10 @@ import fs from 'fs';
 import path from 'path';
 import { Player, makeWorld, trace, TICK, TICK_RATE } from '../public/physics.js';
 import { createMovers } from '../public/movers.js';
-import { WEAPONS, HITGROUP_MULT, BUY, START_MONEY, MAX_MONEY, BUY_TIME, REWARD, DEFAULT_PISTOL, GRENADE, BOMB } from '../public/weapon-defs.js';
+import { WEAPONS, HITGROUP_MULT, BUY, START_MONEY, MAX_MONEY, BUY_TIME, REWARD, DEFAULT_PISTOL, GRENADE, BOMB, canCarryGrenade } from '../public/weapon-defs.js';
 import { reach } from '../public/ballistics.js';
-import { launch, stepFlight } from '../public/grenade-physics.js';
+import { launch, stepFlight, detonates } from '../public/grenade-physics.js';
+import { fireCells, fireTouches, smokeExtinguishes } from '../public/fire-physics.js';
 import { loadOrBuildNav, nearest, findPath } from './nav.mjs';
 
 const BOT_NAMES = ['Albert', 'Allen', 'Bert', 'Bill', 'Brad', 'Brian', 'Chet', 'Cliffe', 'Crusher', 'Derek', 'Doug', 'Elmer', 'Eric', 'Felix', 'Frank', 'Gabe', 'Gary', 'Greg', 'Harvey', 'Ian', 'Jim', 'Joe', 'Keith', 'Kurt', 'Lyle', 'Minh', 'Moe', 'Ned', 'Quinn', 'Rich', 'Ron', 'Seth', 'Shark', 'Steve', 'Ted', 'Vladimir', 'Walt', 'Wolf', 'Yahn', 'Zach'];
@@ -508,7 +509,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   }
   function newRound() {
     autoBalance();
-    grenades.length = 0; smokes.length = 0;
+    grenades.length = 0; smokes.length = 0; fires.length = 0;
     round.tSite = Math.floor(Math.random() * (sites?.length ?? 1));
     round.number++; round.phase = 'freeze'; round.left = FREEZE; round.elapsed = 0; round.rescued = 0;
     Object.assign(bomb, { state: 'none', carrier: 0, o: null, explodeAt: 0, defuser: 0, planter: 0 });
@@ -562,7 +563,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       ent.armor = 100; ent.helmet = true;
     }
     else if (item === 'defuser') { if (ent.kit) return; ent.kit = true; }
-    else if (w.grenade) { if ((ent.gr[item] ?? 0) >= w.max) return; ent.gr[item] = (ent.gr[item] ?? 0) + 1; ent.owned.add(item); }
+    else if (w.grenade) { if (!canCarryGrenade(ent.gr, item)) return; ent.gr[item] = (ent.gr[item] ?? 0) + 1; ent.owned.add(item); }
     else {
       if (ent.owned.has(item)) return;
       for (const o of [...ent.owned]) if (WEAPONS[o].slot === w.slot) ent.owned.delete(o); // replaces the slot's weapon
@@ -572,9 +573,9 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   }
   // CS:S armor (CCSPlayer::OnTakeDamage): kevlar covers chest, stomach, arms (and generic damage); the head only with a helmet; never the legs.
   // The weapon's ArmorRatio decides how much gets through: health takes dmg * ratio/2, the armor pays half of the rest.
-  function applyDamage(target, attacker, dmg, wKey, { group = 2, bone = 0, dir = [0, 0, 1], from = null, wb = false } = {}) {
+  function applyDamage(target, attacker, dmg, wKey, { group = 2, bone = 0, dir = [0, 0, 1], from = null, wb = false, bypassArmor = false } = {}) {
     const covered = group === 0 || group === 2 || group === 3 || group === 4 || group === 5 || (group === 1 && target.helmet);
-    if (target.armor > 0 && covered) {
+    if (target.armor > 0 && covered && !bypassArmor) {
       let health = dmg * 0.5 * (WEAPONS[wKey]?.armor ?? 1), armorLoss = (dmg - health) * 0.5;
       if (armorLoss > target.armor) { armorLoss = target.armor; health = dmg - armorLoss * 2; }
       target.armor -= armorLoss; dmg = health;
@@ -747,7 +748,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   }
 
   // ---------- grenades ----------
-  const grenades = [], smokes = [];
+  const grenades = [], smokes = [], fires = [];
   let nextGrenade = 1;
   const ZERO = [0, 0, 0];
   const cut = (ent, key) => { // one grenade less; fall back to a real weapon when the last one is gone
@@ -758,17 +759,22 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   };
   function throwGrenade(ent, m) {
     const w = WEAPONS[m.w];
-    if (!w?.grenade || !ent.alive || !(ent.gr[m.w] > 0) || round.phase === 'over') return;
+    if (!w?.grenade || !ent.alive || !(ent.gr[m.w] > 0) || round.phase !== 'live') return;
     cut(ent, m.w);
     const power = Math.min(Math.max(Number(m.power) || 1, 0.25), 1), start = launch(world, bulletLimit, ent.p, power);
-    grenades.push({ id: nextGrenade++, w: m.w, owner: ent.id, team: ent.team, ...start, age: 0, lastBounce: -1 });
+    grenades.push({ id: nextGrenade++, w: m.w, owner: ent.id, attacker: ent, team: ent.team, ...start, age: 0, lastBounce: -1 });
   }
   function explode(g) {
-    const k = WEAPONS[g.w].grenade, owner = ents.get(g.owner) ?? { id: g.owner, team: g.team };
+    const k = WEAPONS[g.w].grenade, owner = g.attacker;
     emit({ e: 'explode', w: g.w, o: g.o.map(r2), by: g.owner });
     if (WEAPONS[g.w].grenade === 'he') movers.defs.forEach((d, i) => { if (d.breakable && Math.hypot(...d.center.map((v, k) => v - g.o[k])) < 300) damageMovers(g.o, d.center, 1e9); });
     const at = [g.o[0], g.o[1], g.o[2] + 6];
     if (k === 'smoke') { smokes.push({ id: g.id, o: [...g.o], age: 0 }); return; }
+    if (k === 'fire') {
+      const cells = fireCells(world, bulletLimit, g.o);
+      if (cells.length) fires.push({ id: g.id, w: g.w, owner, team: g.team, o: cells[0], cells, age: 0, damageAt: 0 });
+      return;
+    }
     for (const t of ents.values()) {
       if (!t.alive) continue;
       const chest = [t.p.o[0], t.p.o[1], t.p.o[2] + 36], eye = t.p.eye;
@@ -793,12 +799,26 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const kind = WEAPONS[g.w].grenade;
     const speed = stepFlight(world, bulletLimit, g, TICK);
     if (speed > 90 && g.age - g.lastBounce > 0.06) { g.lastBounce = g.age; emit({ e: 'bounce', w: g.w, o: g.o.map(r2) }); }
-    if (kind === 'smoke' ? g.rest || g.age >= 3 : g.age >= GRENADE.fuse) { explode(g); return false; }
+    if (detonates(kind, g)) { explode(g); return false; }
     return true;
   }
   function updateGrenades() {
     for (let i = grenades.length - 1; i >= 0; i--) if (!stepGrenade(grenades[i])) grenades.splice(i, 1);
     for (let i = smokes.length - 1; i >= 0; i--) { smokes[i].age += TICK; if (smokes[i].age > GRENADE.smokeTime) smokes.splice(i, 1); }
+    for (let i = fires.length - 1; i >= 0; i--) {
+      const f = fires[i]; f.age += TICK;
+      const extinguished = smokes.some((m) => smokeExtinguishes(world, bulletLimit, f, m));
+      if (f.age >= GRENADE.fireTime || extinguished) {
+        if (extinguished) emit({ e: 'extinguish', o: f.o.map(r2) });
+        fires.splice(i, 1); continue;
+      }
+      if (f.age < f.damageAt) continue;
+      f.damageAt = f.age + GRENADE.fireTick;
+      for (const t of ents.values()) {
+        if (!t.alive || (t.team === f.team && t.id !== f.owner.id) || !fireTouches(world, bulletLimit, f, t.p.o)) continue;
+        applyDamage(t, f.owner, GRENADE.fireDps * GRENADE.fireTick, f.w, { from: f.o, bypassArmor: true });
+      }
+    }
   }
 
   // ---------- network ----------
@@ -851,13 +871,14 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const rd = { winner: round.phase === 'over' ? round.winner : null, reason: round.phase === 'over' ? round.reason : null, bomb: bomb.state === 'planted' ? 1 : 0, phase: round.phase, left: r2(Math.max(round.left, 0)), scores: round.scores, number: round.number, alive: { ct: alive('ct'), t: alive('t') } };
     const bm = { s: bomb.state, o: bomb.o?.map(r2) ?? null, carrier: bomb.carrier, left: bomb.state === 'planted' ? r2(Math.max(bomb.explodeAt - now(), 0)) : 0, defusing: bomb.defuser && ents.get(bomb.defuser)?.defusing ? bomb.defuser : 0 };
     const gr = grenades.map((g) => ({ id: g.id, w: g.w, o: g.o.map(r2) })), smk = smokes.map((m) => ({ id: m.id, o: m.o.map(r2), age: r2(m.age) }));
+    const flames = fires.map((f) => ({ id: f.id, o: f.o.map(r2), cells: f.cells.map((p) => p.map(r2)), age: r2(f.age) }));
     for (const e of ents.values()) {
       if (!e.ws) continue;
       const you = { id: e.id, yaw: e.p.yaw, ack: e.lastSeq, team: e.team, money: e.money, armor: Math.round(e.armor), hp: Math.round(e.health), alive: e.alive ? 1 : 0, owned: [...e.owned], gr: e.gr, weapon: e.weapon, o: e.p.o, v: e.p.v, kit: e.kit ? 1 : 0, helmet: e.helmet ? 1 : 0, inSite: e.team === 't' && inSite(e.p.o) ? 1 : 0 };
       const act = e.planting ?? e.defusing; // progress bar
       you.act = act ? { k: e.planting ? 'plant' : 'defuse', p: r2((now() - act.start) / (act.end - act.start)), len: r2(act.end - act.start) } : null;
       for (const f of P_FIELDS) you[f] = e.p[f];
-      if (e.ws.readyState === 1) e.ws.send(JSON.stringify({ t: 'snap', tick: tickNo, ents: list, you, round: rd, ev: events, gr, smokes: smk, bomb: bm, mv: movers.defs.length ? Array.from(movers.state, r2) : undefined }));
+      if (e.ws.readyState === 1) e.ws.send(JSON.stringify({ t: 'snap', tick: tickNo, ents: list, you, round: rd, ev: events, gr, smokes: smk, fires: flames, bomb: bm, mv: movers.defs.length ? Array.from(movers.state, r2) : undefined }));
     }
   }
 

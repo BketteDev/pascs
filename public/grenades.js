@@ -1,9 +1,10 @@
 // Thrown grenades (world models from the per-weapon bins), plus explosion / flash pops and smoke clouds.
 // Everything is driven by server snapshots: `sync(gr, smokes)` every snapshot, `pop(ev)` on an explode event, `update(dt)` per frame.
 import * as THREE from 'three';
-import { GRENADE } from './weapon-defs.js';
+import { GRENADE, GRENADES, WEAPONS } from './weapon-defs.js';
+import { createIncendiaryModel } from './incendiary-model.js';
 
-const KEYS = ['hegrenade', 'flashbang', 'smokegrenade'];
+const KEYS = GRENADES.filter((key) => WEAPONS[key].model);
 const blob = (stops) => { // soft round sprite texture
   const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
   const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32); for (const [o, col] of stops) grad.addColorStop(o, col);
@@ -14,7 +15,7 @@ export async function createGrenades({ worldRoot, loadTex }) {
   const manifest = await fetch('weapons/weapons.json').then((r) => r.json());
   const geos = {}, mats = {};
   await Promise.all(KEYS.map(async (k) => {
-    const m = manifest[k].world?.[0]; if (!m) return;
+    const m = manifest[k]?.world?.[0]; if (!m) return;
     const bin = await fetch(`weapons/${k}.bin`).then((r) => r.arrayBuffer());
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bin, m.pos, m.count * 3), 3));
@@ -35,14 +36,21 @@ export async function createGrenades({ worldRoot, loadTex }) {
 
   const live = new Map(); // grenade id -> { mesh, last }
   const clouds = new Map(); // smoke id -> { puffs, age }
+  const burning = new Map();
   const pops = []; // short effects: { sp, t, life, size }
+  const removeSprite = (sp) => { worldRoot.remove(sp); sp.material.dispose(); };
 
-  function sync(gr, smokes) {
+  function sync(gr, smokes, fires = []) {
     const seen = new Set();
     for (const g of gr) {
       seen.add(g.id);
       let e = live.get(g.id);
-      if (!e) { if (!geos[g.w]) continue; const mesh = new THREE.Mesh(geos[g.w], mats[g.w]); worldRoot.add(mesh); e = { mesh, last: g.o }; live.set(g.id, e); }
+      if (!e) {
+        if (!geos[g.w] && WEAPONS[g.w]?.grenade !== 'fire') continue;
+        const mesh = geos[g.w] ? new THREE.Mesh(geos[g.w], mats[g.w]) : createIncendiaryModel(g.w);
+        if (WEAPONS[g.w].grenade === 'fire') mesh.rotation.x = Math.PI / 2;
+        worldRoot.add(mesh); e = { mesh, last: g.o }; live.set(g.id, e);
+      }
       e.moved = Math.hypot(g.o[0] - e.last[0], g.o[1] - e.last[1], g.o[2] - e.last[2]) > 0.05; e.last = g.o;
       e.mesh.position.set(g.o[0], g.o[1], g.o[2]);
     }
@@ -62,11 +70,26 @@ export async function createGrenades({ worldRoot, loadTex }) {
       }
       c.age = m.age;
     }
-    for (const [id, c] of clouds) if (!seenSmoke.has(id)) { c.puffs.forEach((sp) => worldRoot.remove(sp)); clouds.delete(id); }
+    for (const [id, c] of clouds) if (!seenSmoke.has(id)) { c.puffs.forEach(removeSprite); clouds.delete(id); }
+    const seenFire = new Set();
+    for (const f of fires) {
+      seenFire.add(f.id);
+      let c = burning.get(f.id);
+      if (!c) {
+        const flames = f.cells.flatMap((p, cell) => Array.from({ length: 3 }, (_, i) => {
+          const sp = sprite(fireTex, true), angle = (cell * 3 + i) * 2.4;
+          sp.userData = { p: [p[0] + Math.cos(angle) * i * 12, p[1] + Math.sin(angle) * i * 12, p[2]], phase: angle, cell };
+          return sp;
+        }));
+        c = { flames, age: f.age }; burning.set(f.id, c);
+      }
+      c.age = f.age;
+    }
+    for (const [id, c] of burning) if (!seenFire.has(id)) { c.flames.forEach(removeSprite); burning.delete(id); }
   }
 
   function pop(ev) { // explosion / flash flare at the grenade
-    const he = ev.w === 'hegrenade', flash = ev.w === 'flashbang';
+    const he = ev.w === 'hegrenade' || WEAPONS[ev.w]?.grenade === 'fire', flash = ev.w === 'flashbang';
     if (!he && !flash) return;
     const sp = sprite(he ? fireTex : flashTex, true); sp.position.set(ev.o[0], ev.o[1], ev.o[2] + 10);
     pops.push({ sp, t: 0, life: he ? 0.5 : 0.25, size: he ? 260 : 120 });
@@ -78,9 +101,19 @@ export async function createGrenades({ worldRoot, loadTex }) {
       const fade = Math.min(c.age / 0.8, 1) * Math.min((GRENADE.smokeTime - c.age) / 3, 1); // blooms in, thins out at the end
       for (const sp of c.puffs) { sp.material.opacity = 0.92 * Math.max(fade, 0); sp.material.rotation = sp.userData.rot + c.age * 0.05; sp.scale.setScalar(sp.userData.base * (0.45 + 0.55 * Math.min(c.age / 1.2, 1))); }
     }
+    for (const c of burning.values()) {
+      c.age += dt;
+      const fade = Math.max(0, Math.min(1, (GRENADE.fireTime - c.age) / 0.7));
+      for (const sp of c.flames) {
+        const { p, phase, cell } = sp.userData, growth = Math.max(0, Math.min(1, (c.age - (cell ? 0.3 : 0)) / 0.3));
+        const flicker = 0.85 + 0.15 * Math.sin(c.age * 13 + phase), height = (40 + 18 * Math.sin(phase)) * flicker;
+        sp.position.set(p[0], p[1], p[2] + height * 0.4);
+        sp.scale.set(55 * growth, height * growth, 1); sp.material.opacity = fade * flicker * 0.85;
+      }
+    }
     for (let i = pops.length - 1; i >= 0; i--) {
       const p = pops[i]; p.t += dt; const k = p.t / p.life;
-      if (k >= 1) { worldRoot.remove(p.sp); pops.splice(i, 1); continue; }
+      if (k >= 1) { removeSprite(p.sp); pops.splice(i, 1); continue; }
       p.sp.material.opacity = 1 - k; p.sp.scale.setScalar(p.size * (0.4 + 0.6 * Math.sqrt(k)));
     }
   }

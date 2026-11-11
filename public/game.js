@@ -260,6 +260,10 @@ function handleEvent(ev, now) {
   }
   else if (ev.e === 'bounce') { const snd = WEAPONS[ev.w]?.sounds.bounce; if (snd) playAt('weapons/' + snd, ev.o, 0.7, 'bounce'); }
   else if (ev.e === 'explode') { const snd = WEAPONS[ev.w]?.sounds.explode; if (snd) playAt('weapons/' + snd, ev.o, 1, 'blast'); grenades?.pop(ev); }
+  else if (ev.e === 'extinguish') {
+    playAt('weapons/smokegrenade/sg_explode', ev.o, 0.7);
+    if (Math.hypot(...ev.o.map((v, i) => v - player.o[i])) < 500) hud.notice('Fire extinguished');
+  }
   else if (ev.e === 'flash') { if (ev.to === net.id) { flashUntil = now + ev.dur; flashDur = ev.dur; } }
   else if (ev.e === 'hostage') { // used: "let's go" / "I'll stay here", from the hostage
     const pick = (a) => a[(Math.random() * a.length) | 0];
@@ -306,7 +310,7 @@ function onSnap(d, arrival) {
   hud.setBomb({ carrying: y.alive && y.owned.includes('c4'), inSite: y.inSite, act: y.act });
   if (defuseHeld && (!y.alive || d.bomb?.s !== 'planted')) stopDefuse();
   weapons?.setLoadout(y.owned, y.weapon);
-  grenades?.sync(d.gr ?? [], d.smokes ?? []);
+  grenades?.sync(d.gr ?? [], d.smokes ?? [], d.fires ?? []);
   roster = d.ents; buyMenu?.refresh(); teamMenu?.refresh();
   for (const e of d.ev) snapEvents.push(e);
 }
