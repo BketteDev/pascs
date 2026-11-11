@@ -1,4 +1,4 @@
-// Extract optional equipment icons from a local CS2 installation.
+// Extract the incendiary equipment icons from a local CS2 installation.
 import fs from 'node:fs';
 import path from 'node:path';
 import { CSGO } from './content.mjs';
@@ -13,6 +13,6 @@ const icons = ['molotov', 'incgrenade'].map((id) => {
   if (end < 0) throw new Error(`No SVG found for ${id} in ${archive}`);
   return [id, data.subarray(start, end + '</svg>'.length)];
 });
-const output = path.resolve(import.meta.dirname, '..', 'public', 'ui', 'icons');
+const output = path.resolve(import.meta.dirname, '..', 'public', 'equipment-icons');
 fs.mkdirSync(output, { recursive: true });
 for (const [id, svg] of icons) fs.writeFileSync(path.join(output, `${id}.svg`), svg);
