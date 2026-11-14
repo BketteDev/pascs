@@ -5,6 +5,7 @@ import path from 'path';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createGame } from './server/game.mjs';
+import { DEFAULT_BINDS } from './public/binds.js';
 import { EventEmitter } from 'node:events';
 
 const game = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), botsFight: false }); // the feature tests move players around: no stray bot bullets
@@ -345,10 +346,15 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     await sleep(5100);
     alice.alive = true; alice.health = 100; alice.money = 16000;
     bob.alive = true; bob.health = 100; bob.armor = 0; bob.money = 16000;
+    assert.strictEqual(DEFAULT_BINDS.quit, 'F10', 'quick-quit bind defaults to F10');
+    a.events.length = 0;
     a.send({ t: 'buy', item: 'm4a1' }); b.send({ t: 'buy', item: 'ak47' }); await sleep(100);
     assert(me().owned.includes('m4a1') && a.last.ents.every((e) => typeof e.m === 'number'), 'bought m4a1 & ents carry spectator money');
+    assert(a.events.some((e) => e.e === 'itempickup' && e.id === a.id && e.item === 'm4a1'), 'buy emits itempickup sound event');
+    a.events.length = 0;
     a.send({ t: 'drop' }); await sleep(100);
     assert(!me().owned.includes('m4a1') && a.last.drops.some((d) => d.w === 'm4a1'), 'G drops active primary weapon');
+    assert(a.events.some((e) => e.e === 'weapondrop' && e.id === a.id && e.w === 'm4a1'), 'G emits weapondrop sound event');
     const dropPos = a.last.drops.find((d) => d.w === 'm4a1').o;
     await sleep(950); // wait out toss grace before walk-over pickup
     alice.p.o = [dropPos[0], dropPos[1], dropPos[2] + 1]; alice.p.v = [0, 0, 0];

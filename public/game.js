@@ -238,7 +238,14 @@ function handleEvent(ev, now) {
   }
   else if (ev.e === 'plantcancel') clearInterval(plantBeeps.get(ev.id));
   else if (ev.e === 'planted') { for (const t of plantBeeps.values()) clearInterval(t); play('radio/bombpl', 0.9); playAt('weapons/c4/c4_plant', ev.o, 0.8, 'bomb'); }
-  else if (ev.e === 'bombpickup') { if (ev.id === net.id) play('items/itempickup', 0.7); }
+  else if (ev.e === 'bombpickup' || ev.e === 'itempickup') {
+    if (ev.id === net.id || ev.id === specTargetId) play('items/itempickup', 0.7);
+    else if (ev.o) playAt('items/itempickup', ev.o, 0.55, 'gear');
+  }
+  else if (ev.e === 'bombdrop' || ev.e === 'weapondrop') {
+    if (ev.id === net.id || ev.id === specTargetId) play('weapons/c4/c4_plant', 0.65);
+    else if (ev.o) playAt('weapons/c4/c4_plant', ev.o, 0.7, 'gear');
+  }
   else if (ev.e === 'defusing') playAt('weapons/c4/c4_disarm', ev.o, 0.8, 'bomb');
   else if (ev.e === 'defused') { play('radio/bombdef', 0.9); playAt('weapons/c4/c4_disarm', ev.o, 0.9, 'bomb'); }
   else if (ev.e === 'bombexplode') {
@@ -330,10 +337,19 @@ function applySettings(s) {
   if (s.crosshair) hud.setCrosshair(s.crosshair);
   if (s.name) { net.name = s.name; net.send({ t: 'name', name: s.name }); }
 }
+function quitGame() {
+  navigator.keyboard?.unlock?.();
+  document.exitPointerLock?.();
+  document.exitFullscreen?.().catch(() => {});
+  document.title = 'New Tab';
+  document.body.replaceChildren();
+  try { window.open('', '_self'); window.close(); } catch {}
+  location.replace('about:blank');
+}
 const mainMenu = createMainMenu({
   inGame: () => joined,
   onPlay: () => { if (joined) startPlay(); else teamMenu.open(); },
-  onQuit: () => { document.exitFullscreen?.().catch(() => {}); window.close(); location.href = 'about:blank'; }, // a tab the user opened can't close itself: leave the game instead
+  onQuit: quitGame, // a tab the user opened can't always close itself: wipe and leave immediately
   onSettings: applySettings,
 });
 const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen());
@@ -356,7 +372,8 @@ await new Promise((done) => { // wait for textures (capped so a missing file can
   tick();
 });
 preload('player/headshot1', 'player/headshot2', 'player/damage1', 'player/damage2', 'player/damage3', 'player/kevlar1', 'player/kevlar2', 'player/kevlar3',
-  'weapons/c4/c4_beep1', 'weapons/c4/c4_click', 'weapons/c4/c4_disarm', 'radio/bombpl', 'radio/bombdef', 'radio/ctwin', 'radio/terwin'); // hit / bomb / round sounds play without delay
+  'items/itempickup', 'weapons/c4/c4_plant',
+  'weapons/c4/c4_beep1', 'weapons/c4/c4_click', 'weapons/c4/c4_disarm', 'radio/bombpl', 'radio/bombdef', 'radio/ctwin', 'radio/terwin'); // hit / drop / pickup / bomb / round sounds play without delay
 setLoad(100, 'Ready');
 loadingEl.style.opacity = 0; setTimeout(() => loadingEl.remove(), 450);
 applySettings({});
@@ -369,6 +386,9 @@ let wheelJump = false; // a wheel notch counts as the jump button being down for
 const info = document.getElementById('info');
 if (q.has('debug')) info.style.display = 'block'; // ?debug: fps / speed / position line
 addEventListener('keydown', (e) => {
+  if (!mainMenu.capturing() && !e.target.closest?.('input, textarea, select') && is('quit', e.code)) {
+    e.preventDefault(); quitGame(); return;
+  }
   if (e.code === 'Escape' && !e.repeat) { // fullscreen + keyboard lock deliver Esc here: it opens the menu instead of leaving fullscreen
     e.preventDefault();
     if (mainMenu.capturing()) return; // Esc cancels a rebind, handled by the Keyboard tab

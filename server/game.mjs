@@ -602,6 +602,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       ent.owned.add(item); ent.weapon = ''; setWeapon(ent, item);
     }
     ent.money -= buyable.price;
+    if (!ent.bot && item !== 'defuser') emit({ e: 'itempickup', id: ent.id, item, o: ent.p.o.map(r2) });
   }
   // CS:S armor (CCSPlayer::OnTakeDamage): kevlar covers chest, stomach, arms (and generic damage); the head only with a helmet; never the legs.
   // The weapon's ArmorRatio decides how much gets through: health takes dmg * ratio/2, the armor pays half of the rest.
@@ -722,8 +723,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       if (ent.weapon === 'c4') { const next = [...ent.owned].sort((a, b) => WEAPONS[a].slot - WEAPONS[b].slot)[0]; ent.weapon = ''; setWeapon(ent, next, true); }
       ent.planting = null;
     }
-    Object.assign(bomb, { state: 'dropped', carrier: 0, o: floorBelow(o) });
-    emit({ e: 'bombdrop', o: bomb.o.map(r2) }); repathAll();
+    Object.assign(bomb, { state: 'dropped', carrier: 0, o: floorBelow(o), grace: toss ? 0.9 : 0 });
+    emit({ e: 'bombdrop', id: ent?.id ?? 0, o: bomb.o.map(r2) }); repathAll();
   }
   function startPlant(ent) {
     if (ent.planting || bomb.state !== 'carried' || bomb.carrier !== ent.id || !ent.alive || round.phase !== 'live' || ent.weapon !== 'c4' || !ent.p.onGround || !inSite(ent.p.o)) return;
@@ -747,8 +748,9 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       else bomb.o = [...c.p.o];
     }
     if (bomb.state === 'dropped') { // any live T walking over it picks it up
-      for (const e of ents.values()) if (e.alive && e.team === 't' && Math.hypot(e.p.o[0] - bomb.o[0], e.p.o[1] - bomb.o[1]) < 40 && Math.abs(e.p.o[2] - bomb.o[2]) < 64) {
-        giveBomb(e); emit({ e: 'bombpickup', id: e.id }); repathAll(); break;
+      if (bomb.grace > 0) bomb.grace = Math.max(0, bomb.grace - TICK);
+      else for (const e of ents.values()) if (e.alive && e.team === 't' && Math.hypot(e.p.o[0] - bomb.o[0], e.p.o[1] - bomb.o[1]) < 40 && Math.abs(e.p.o[2] - bomb.o[2]) < 64) {
+        giveBomb(e); emit({ e: 'bombpickup', id: e.id, o: bomb.o.map(r2) }); repathAll(); break;
       }
     }
     for (const e of ents.values()) {
@@ -820,7 +822,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const old = [...ent.owned].find((k) => WEAPONS[k]?.slot === slot);
     if (old) dropWeapon(ent, old, false);
     ent.owned.add(d.w); ent.weapon = ''; setWeapon(ent, d.w);
-    emit({ e: 'itempickup', id: ent.id, item: d.w });
+    emit({ e: 'itempickup', id: ent.id, item: d.w, o: d.o.map(r2) });
     return true;
   }
   function updateDrops() {
@@ -833,7 +835,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
         if (Math.hypot(e.p.o[0] - d.o[0], e.p.o[1] - d.o[1]) < 40 && Math.abs(e.p.o[2] - d.o[2]) < 64) {
           e.owned.add(d.w);
           if (slot === 1 || (e.bot && WEAPONS[d.w].price > (WEAPONS[e.weapon]?.price ?? 0))) { e.weapon = ''; setWeapon(e, d.w); }
-          emit({ e: 'itempickup', id: e.id, item: d.w });
+          emit({ e: 'itempickup', id: e.id, item: d.w, o: d.o.map(r2) });
           drops.splice(i, 1);
           break;
         }
