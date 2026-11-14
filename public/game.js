@@ -338,13 +338,13 @@ function applySettings(s) {
   if (s.name) { net.name = s.name; net.send({ t: 'name', name: s.name }); }
 }
 function quitGame() {
+  renderer.setAnimationLoop(null);
   navigator.keyboard?.unlock?.();
   document.exitPointerLock?.();
-  document.exitFullscreen?.().catch(() => {});
-  document.title = 'New Tab';
   document.body.replaceChildren();
-  try { window.open('', '_self'); window.close(); } catch {}
-  location.replace('about:blank');
+  window.close();
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}).finally(() => window.close());
+  setTimeout(() => { if (history.length > 1) history.go(1 - history.length); else location.replace('about:blank'); }, 150);
 }
 const mainMenu = createMainMenu({
   inGame: () => joined,
