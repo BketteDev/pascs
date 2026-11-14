@@ -2,7 +2,7 @@
 // ammo/reload, sounds, bullet decals, HUD.
 import * as THREE from 'three';
 import { WEAPONS, ORDER, GRENADES } from './weapon-defs.js';
-import { createIncendiaryModel } from './incendiary-model.js';
+import { createIncendiaryModel, loadIncendiaryModels } from './incendiary-model.js';
 import { trace } from './physics.js';
 import { march } from './ballistics.js';
 import { audio, play as playSound, playAt, preload } from './audio.js';
@@ -10,6 +10,14 @@ import { is } from './binds.js';
 
 const rad = Math.PI / 180;
 const VM_FOV = 54; // viewmodel_fov (horizontal degrees at 4:3, like the world fov)
+const LIGHT_FRAME = 0.16, LIGHT_TIME = 0.28;
+// Smoke viewmodel left hand (bone 7), from the Source bind pose.
+const LEFT_HAND_BIND = new THREE.Matrix4().set(
+  0.05580, -0.99121, 0.11992, -12.551,
+  0.99696, 0.06185, 0.04737, -5.97416,
+  -0.05437, 0.11692, 0.99165, 0.57934,
+  0, 0, 0, 1,
+).invert();
 
 // CS:S view models are authored left-handed (x forward, y left, z up) and mirrored for cl_righthand 1:
 // three camera space = (right = +y, up = +z, back = -x). Determinant -1, three flips the winding for us.
@@ -58,23 +66,47 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const holder = new THREE.Group(); scene.add(holder);
   const vms = {}, loading = new Map(); // key -> { group, bones, seqs, anim }
   const loadVm = (key) => {
-    if (WEAPONS[key].grenade === 'fire') {
-      if (!vms[key]) {
-        const group = createIncendiaryModel(key); group.visible = false; holder.add(group);
-        vms[key] = { group, procedural: true, anim: null };
-      }
-      return Promise.resolve(vms[key]);
-    }
-    if (!loading.has(key)) loading.set(key, fetch(`weapons/${key}.bin`).then((r) => r.arrayBuffer()).then((bin) => {
-      const info = manifest[key];
+    const fire = WEAPONS[key].grenade === 'fire', source = fire ? 'smokegrenade' : key;
+    if (!loading.has(key)) loading.set(key, fetch(`weapons/${source}.bin`).then((r) => r.arrayBuffer()).then(async (bin) => {
+      if (fire) await loadIncendiaryModels(loadTex);
+      const info = manifest[source];
       const group = new THREE.Group(); group.visible = false;
-      group.matrixAutoUpdate = false; group.matrix.copy(WEAPONS[key].rightHanded ? MODEL_TO_CAMERA_RH : MODEL_TO_CAMERA);
+      group.matrixAutoUpdate = false; group.matrix.copy(WEAPONS[source].rightHanded ? MODEL_TO_CAMERA_RH : MODEL_TO_CAMERA);
       // bones carry the baked skinning matrices directly (boneInverse = identity)
       const bones = Array.from({ length: info.bones }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; });
       const skeleton = new THREE.Skeleton(bones);
+      let incendiary, ignition;
       for (const m of info.meshes) {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bin, m.pos, m.count * 3), 3));
+        if (fire && m === info.meshes[0]) {
+          // The smoke grenade's item mesh is skinned entirely to bone 0; keep its animated hands.
+          const model = createIncendiaryModel(key);
+          model.rotation.x = Math.PI / 2;
+          geo.computeBoundingBox(); geo.boundingBox.getCenter(model.position);
+          incendiary = new THREE.Group(); incendiary.matrixAutoUpdate = false;
+          incendiary.add(model); group.add(incendiary);
+          if (key === 'molotov') {
+            model.scale.setScalar(0.55);
+            const lighter = createIncendiaryModel('lighter'), socket = new THREE.Group();
+            const spark = lighter.children.find((mesh) => mesh.material.transparent);
+            lighter.scale.setScalar(0.62);
+            lighter.rotation.x = Math.PI / 2;
+            lighter.position.set(1.7, -0.2, 0.3).applyMatrix4(LEFT_HAND_BIND);
+            socket.matrixAutoUpdate = false; socket.visible = false;
+            socket.add(lighter); group.add(socket);
+            const wick = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+            wick.position.set(2.15, 8.3, -0.2); wick.scale.set(2.8, 4.2, 1); wick.visible = false;
+            loadTex('equipment-models/ground-fire.png', (map) => {
+              const flame = map.clone();
+              flame.flipY = true; flame.repeat.set(0.25, 0.25); flame.offset.set(0, 0.75); flame.needsUpdate = true;
+              wick.material.map = flame; wick.material.needsUpdate = true;
+            });
+            model.add(wick);
+            ignition = { socket, spark, wick, model };
+          }
+          continue;
+        }
         geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(bin, m.nrm, m.count * 3), 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(bin, m.uv, m.count * 2), 2));
         geo.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array(bin, m.bw, m.count * 4), 4));
@@ -88,10 +120,14 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
         group.add(mesh);
       }
       const seqs = info.sequences.map((q) => ({ ...q, skin: new Float32Array(bin, q.skin, q.frames * info.bones * 12), attach: q.attach >= 0 ? new Float32Array(bin, q.attach, q.frames * 3) : null }));
+      if (ignition) {
+        const reach = seqs.find((q) => q.activity === 'ACT_VM_PULLPIN');
+        seqs.push({ ...reach, frames: Math.min(28, reach.frames), fps: reach.fps * 1.15, loop: false, activity: 'ACT_VM_LIGHT' });
+      }
       holder.add(group);
       const snd = WEAPONS[key].sounds; // fire / empty / deploy / reload / ... decoded now, not on first use
       preload(...Object.values(snd).flatMap((v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? (typeof v[1] === 'string' && !Array.isArray(v[0]) ? [v[1]] : v.map((x) => x[1])) : [])).map((n) => 'weapons/' + n));
-      return (vms[key] = { group, bones, seqs, anim: null });
+      return (vms[key] = { group, bones, seqs, incendiary, ignition, anim: null });
     }));
     return loading.get(key);
   };
@@ -107,7 +143,6 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   // ---------- view model animation (baked sequences, chosen by activity like the engine) ----------
   const findSeqs = (vm, act) => vm.seqs.filter((q) => q.activity === act);
   function playAct(key, act, fallback) {
-    if (vms[key].procedural) { vms[key].anim = { act, start: performance.now() / 1000 }; return 0.7; }
     const vm = vms[key], sil = WEAPONS[key].silenced ? findSeqs(vm, act + '_SILENCED') : []; // the USP-S plays its suppressed sequences
     const list = sil.length ? sil : findSeqs(vm, act).length ? findSeqs(vm, act) : findSeqs(vm, fallback ?? '');
     if (!list.length) return 0;
@@ -118,15 +153,6 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const muzzle = new THREE.Vector3();
   function poseViewModel(key, t) { // write interpolated skinning matrices into the bones; returns muzzle (model space) or null
     const vm = vms[key];
-    if (vm.procedural) {
-      const elapsed = t - (vm.anim?.start ?? t), throwing = vm.anim?.act === 'ACT_VM_THROW';
-      const draw = vm.anim?.act === 'ACT_VM_DRAW' ? Math.max(0, 1 - elapsed / 0.5) : 0;
-      const swing = throwing ? Math.sin(Math.min(elapsed / 0.4, 1) * Math.PI) : 0;
-      vm.group.position.set(7, -8 - draw * 14 + swing * 4, -22 - swing * 7);
-      vm.group.rotation.set(-0.1 - swing, 0, -0.25);
-      vm.group.visible = !throwing || elapsed < 0.22;
-      return null;
-    }
     if (!vm.anim || (!(s.pin && key === s.cur) && !vm.anim.seq.loop && (t - vm.anim.start) * vm.anim.seq.fps >= vm.anim.seq.frames - 1)) {
       if (!vm.anim || !vm.anim.seq.activity.startsWith('ACT_VM_IDLE')) playAct(key, 'ACT_VM_IDLE');
     }
@@ -140,6 +166,37 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       // Source 3x4 row-major -> three column-major 4x4
       for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) e[c * 4 + r] = S[a + r * 4 + c] + (S[b + r * 4 + c] - S[a + r * 4 + c]) * w;
       e[3] = e[7] = e[11] = 0; e[15] = 1;
+    }
+    if (vm.incendiary) {
+      vm.incendiary.matrix.copy(vm.bones[0].matrixWorld);
+      vm.incendiary.matrixWorldNeedsUpdate = true;
+      vm.incendiary.visible = seq.activity !== 'ACT_VM_THROW' || t - start < 0.22;
+      if (vm.ignition?.model) {
+        const lighting = seq.activity === 'ACT_VM_LIGHT', elapsed = t - start;
+        vm.ignition.model.rotation.z = lighting ? -0.18 * Math.sin(Math.min(elapsed / 0.45, 1) * Math.PI) : Math.sin(t * 1.8) * 0.025;
+      }
+    }
+    if (vm.ignition) {
+      const { socket, spark, wick } = vm.ignition, elapsed = t - start;
+      const lighting = seq.activity === 'ACT_VM_LIGHT', lit = lighting && elapsed >= LIGHT_FRAME;
+      socket.visible = lighting;
+      if (lighting) {
+        socket.matrix.copy(vm.bones[7].matrixWorld);
+        socket.matrixWorldNeedsUpdate = true;
+      }
+      if (spark) {
+        spark.visible = lighting && elapsed >= LIGHT_FRAME - 0.04 && elapsed < LIGHT_FRAME + 0.35;
+        if (spark.visible) spark.scale.setScalar(0.85 + 0.3 * Math.abs(Math.sin(t * 45)));
+      }
+      wick.visible = lit || seq.activity === 'ACT_VM_THROW';
+      if (wick.visible) {
+        const fi = Math.floor(t * 24) % 16;
+        wick.material.map?.offset.set((fi % 4) * 0.25, 0.75 - Math.floor(fi / 4) * 0.25);
+        const fl = (lighting ? 3.8 : 2.8) + Math.sin(t * 37) * 0.5;
+        wick.scale.set(fl * 0.85, fl * 1.35, 1);
+        wick.material.rotation = Math.sin(t * 21) * 0.16;
+      }
+      if (lit && !vm.anim.ignited) { vm.anim.ignited = true; play(WEAPONS[key].sounds.light, 0.55); }
     }
     if (!seq.attach) return null;
     const P = seq.attach;
@@ -293,8 +350,8 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     let gained = false;
     for (const k of next) if (!owned.has(k)) { gained = true; ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve }; loadVm(k); }
     owned = next; if (gained) showList();
-    if (!owned.has(s.cur)) select(owned.has(s.last) ? s.last : bySlot(2) ?? 'knife');
-    else if (gained && current && current !== s.cur && owned.has(current)) select(current); // a purchase switches to the new weapon
+    if (!owned.has(s.cur)) select(current && owned.has(current) ? current : owned.has(s.last) ? s.last : bySlot(2) ?? 'knife');
+    else if (gained && current && current !== s.cur && owned.has(current)) select(current); // a purchase / pickup switches to the new weapon
   }
 
   function startReload() {
@@ -417,10 +474,22 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   }
 
   function startPin(button) { // grenade: hold to keep the pin pulled, release to throw (LMB = full throw, RMB = lob)
-    s.pin = { button, power: button === 0 ? 1 : 0.45 };
-    playAct(s.cur, 'ACT_VM_PULLPIN'); if (def().sounds.pin) play(def().sounds.pin, 0.5);
+    s.pin = { button, power: button === 0 ? 1 : 0.45, started: now() };
+    playAct(s.cur, s.cur === 'molotov' ? 'ACT_VM_LIGHT' : 'ACT_VM_PULLPIN');
+    if (def().sounds.pin) play(def().sounds.pin, 0.5);
   }
   function release() {
+    const pin = s.pin, delay = s.cur === 'molotov' ? LIGHT_TIME - (now() - pin.started) : 0;
+    if (delay > 0) {
+      if (!pin.queued) {
+        pin.queued = true;
+        setTimeout(() => { if (s.pin === pin && alive() && document.pointerLockElement) finishThrow(); }, delay * 1000);
+      }
+      return;
+    }
+    finishThrow();
+  }
+  function finishThrow() {
     const key = s.cur, power = s.pin.power;
     s.pin = null; const pendingThrow = s.throwing = { end: now() + 0.7 };
     playAct(key, 'ACT_VM_THROW');
@@ -449,7 +518,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   document.addEventListener('pointerlockchange', () => { s.held = false; stopPlant(); if (s.pin) { s.pin = null; playAct(s.cur, 'ACT_VM_IDLE'); } });
   addEventListener('contextmenu', (e) => e.preventDefault());
   addEventListener('keydown', (e) => {
-    if (e.repeat || uiOpen()) return;
+    if (!alive() || e.repeat || uiOpen()) return;
     const n = Number(e.code.match(/^Digit([1-7])$/)?.[1] ?? 0);
     if (n === 4) { // cycle: the next owned grenade after the current one (the first when none is out)
       const mine = GRENADES.filter((k) => owned.has(k)), i = mine.indexOf(s.cur);
@@ -457,7 +526,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     } else if (n) { const k = n <= 3 ? bySlot(n) : n === 5 ? 'c4' : n === 6 ? 'smokegrenade' : GRENADES.find((g) => owned.has(g) && WEAPONS[g].grenade === 'fire'); if (k && owned.has(k)) select(k); } // 6 = smoke, 7 = incendiary
     else if (is('lastweapon', e.code)) select(s.last);
     else if (is('reload', e.code)) startReload();
-    else if (is('drop', e.code) && s.cur === 'c4') { stopPlant(); net.send({ t: 'drop' }); }
+    else if (is('drop', e.code) && (s.cur === 'c4' || def().slot === 1 || def().slot === 2)) { stopPlant(); net.send({ t: 'drop' }); }
   });
 
   // The firing decision: called on the mouse click itself (no waiting for the next frame) and every frame. Several shots may be due in
@@ -475,8 +544,47 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     s.wasHeld = s.held;
   }
 
+  function showFlash(key, t, until, zoom) {
+    const mz = poseViewModel(key, t);
+    if (t < until && !zoom && mz) {
+      flash.position.copy(mz).applyMatrix4(vms[key].group.matrix).add(holder.position);
+      if (!s.flashRoll) { s.flashRoll = [Math.random() * 6.28, Math.random() * 6.28, 0.7 + Math.random() * 0.5]; } // fixed for the whole flash so it doesn't strobe
+      flash.rotation.z = s.flashRoll[0]; flash.scale.setScalar(s.flashRoll[2]); flash.visible = true;
+      flashStar.position.copy(flash.position); flashStar.rotation.z = s.flashRoll[1]; flashStar.scale.setScalar(s.flashRoll[2]); flashStar.visible = true;
+    } else { flash.visible = flashStar.visible = false; s.flashRoll = null; }
+  }
+  function setSpectate(wKey, dt = 0, speed = 0) {
+    if (!wKey || !WEAPONS[wKey]) {
+      if (s.specCur) {
+        if (vms[s.specCur]) vms[s.specCur].group.visible = false;
+        if (vms[s.cur]) vms[s.cur].group.visible = true;
+        s.specCur = null; s.specFlashUntil = 0; flash.visible = flashStar.visible = false;
+      }
+      return;
+    }
+    if (s.zoom) setZoom(0);
+    if (!vms[wKey]) { loadVm(wKey); holder.visible = false; return; }
+    if (s.specCur !== wKey) {
+      if (s.specCur && vms[s.specCur]) vms[s.specCur].group.visible = false;
+      if (vms[s.cur]) vms[s.cur].group.visible = false;
+      s.specCur = wKey; vms[wKey].group.visible = true; playAct(wKey, 'ACT_VM_DRAW');
+    }
+    const sp = speed / 250;
+    s.bob += dt * sp * 9.5;
+    holder.position.set(Math.sin(s.bob) * 0.1 * Math.min(sp, 1.2), Math.sin(s.bob * 2) * 0.08 * Math.min(sp, 1.2), 0);
+    holder.visible = true;
+    showFlash(wKey, now(), s.specFlashUntil ?? 0, false);
+  }
+  function spectatorFire(wKey) {
+    const key = wKey ?? s.specCur;
+    if (!key || !vms[key]) return;
+    playAct(key, 'ACT_VM_PRIMARYATTACK');
+    if (!WEAPONS[key]?.melee && !WEAPONS[key]?.grenade) { s.specFlashUntil = now() + 0.06; s.flashRoll = null; }
+  }
+
   // ---------- per-frame ----------
   function update(dt) {
+    if (s.specCur) setSpectate(null);
     const t = now(), d = def(), a = ammo[s.cur];
     // view punch decay (Source DecayPunchAngle, sped up 4x so the aim snaps back to the starting point quickly)
     const len = Math.hypot(s.punch[0], s.punch[1]); // the view holds its pattern position while firing and recovers afterwards
@@ -516,13 +624,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     s.swayY = (s.swayY ?? 0) + (lim(dt > 0 ? (-dpitch / dt) * 0.04 : 0) - (s.swayY ?? 0)) * k; // looking up: it trails down
     holder.position.set(Math.sin(s.bob) * 0.12 * bobAmt + s.swayX, Math.sin(s.bob * 2) * 0.1 * bobAmt + s.swayY, 0);
     holder.visible = !s.zoom;
-    const mz = poseViewModel(s.cur, t);
-    if (t < s.flashUntil && !s.zoom && mz) {
-      flash.position.copy(mz).applyMatrix4(vms[s.cur].group.matrix).add(holder.position);
-      if (!s.flashRoll) { s.flashRoll = [Math.random() * 6.28, Math.random() * 6.28, 0.7 + Math.random() * 0.5]; } // fixed for the whole flash so it doesn't strobe
-      flash.rotation.z = s.flashRoll[0]; flash.scale.setScalar(s.flashRoll[2]); flash.visible = true;
-      flashStar.position.copy(flash.position); flashStar.rotation.z = s.flashRoll[1]; flashStar.scale.setScalar(s.flashRoll[2]); flashStar.visible = true;
-    } else { flash.visible = flashStar.visible = false; s.flashRoll = null; }
+    showFlash(s.cur, t, s.flashUntil, s.zoom);
   }
 
   function render(aspect) {
@@ -541,5 +643,5 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     for (const k of owned) ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
     s.reload = null; s.pin = null; s.throwing = null; s.emptyClicked = false; hudUpdate();
   }
-  return { debug, update, render, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned };
+  return { debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned };
 }

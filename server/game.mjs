@@ -53,11 +53,13 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   // rescued = CT win, time out = T win. Hostages are entities of team 'h', so snapshots, collision, hits and lag compensation treat them like players.
   const hostageMode = !range && !sites && spawns.h.length > 0, rescueZones = worldJson.rescue ?? [];
   const inRescue = (o) => rescueZones.some((z) => o[0] >= z.min[0] && o[0] <= z.max[0] && o[1] >= z.min[1] && o[1] <= z.max[1] && o[2] >= z.min[2] - 16 && o[2] <= z.max[2] + 16);
+  const inActiveFire = (o) => fires.find((f) => fireTouches(world, bulletLimit, f, o));
   const spotsCache = new Map();
-  const spotsAround = (site, radius) => { // nav nodes near a site, on its floor level
+  const spotsAround = (site, radius) => { // nav nodes near a site, on its floor level (preferring unburned spots)
     const k = `${site.o[0]},${site.o[1]},${radius}`;
     if (!spotsCache.has(k)) spotsCache.set(k, nav.nodes.filter((n) => Math.hypot(n.o[0] - site.o[0], n.o[1] - site.o[1]) < radius && Math.abs(n.o[2] - site.o[2]) < 160).map((n) => n.i));
-    return spotsCache.get(k);
+    const all = spotsCache.get(k), safe = fires.length ? all.filter((i) => !inActiveFire(nav.nodes[i].o)) : all;
+    return safe.length ? safe : all;
   };
   const surfaceAt = (p) => { // footstep surface under a player
     const r = trace(world, [p.o[0], p.o[1], p.o[2] + 1], [p.o[0], p.o[1], p.o[2] - 6], [-8, -8, 0], [8, 8, 2]);
@@ -259,6 +261,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     if (best < 0) return;
     const open = moverTarget[best] === 0;
     for (const i of [best, ...partners(best)]) setDoor(i, open, ent.p.o);
+    return true;
   }
   const blockedBy = (i) => { // a player inside the door's new shape stops it (Source doors stop on what they hit)
     const w = makeWorld(movers.defs[i].entries.map((k) => world.entries[k]));
@@ -335,12 +338,32 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     ai.path = findPath(nav, nearest(nav, bot.p.o), goal); ai.idx = 0; ai.stuck = 0; ai.walking = Math.random() < 0.2;
     if (!ai.path?.length) { ai.path = null; ai.holdUntil = tickNo * TICK + 0.5; } // already there / unreachable: wait a moment, then pick another goal
   }
+  function botThrowAt(bot, wKey, to, now) {
+    const p = bot.p, dx = to[0] - p.o[0], dy = to[1] - p.o[1], dist = Math.hypot(dx, dy);
+    const prevYaw = p.yaw, prevPitch = p.pitch;
+    p.yaw = Math.atan2(dy, dx);
+    p.pitch = Math.min(0.45, Math.max(-0.4, (to[2] - p.eye[2]) / (dist || 1) + dist / 1800));
+    throwGrenade(bot, { w: wKey, power: Math.min(1, Math.max(0.3, dist / 750)) });
+    p.yaw = prevYaw; p.pitch = prevPitch;
+    bot.ai.nextNadeAt = now + 6;
+  }
   function think(bot) {
     const ai = bot.ai, p = bot.p;
     if (!bot.alive || round.phase !== 'live') return simulate(bot, { fwd: 0, side: 0 });
     const now = tickNo * TICK;
     if (bot.planting || bot.defusing) return simulate(bot, { fwd: 0, side: 0, duck: !!bot.defusing });
     if (range) return rangeBot(bot);
+    const standingFire = fires.length && inActiveFire(p.o);
+    if (standingFire) { // sprint clear of active flames before stopping to fight or hold
+      ai.holdUntil = 0; ai.path = null;
+      const away = Math.atan2(p.o[1] - standingFire.o[1], p.o[0] - standingFire.o[0]), dy = angTo(p.yaw, away);
+      p.yaw += Math.sign(dy) * Math.min(Math.abs(dy), 12 * TICK);
+      return simulate(bot, { fwd: Math.abs(dy) > 1.8 ? -1 : 1, side: Math.hypot(p.v[0], p.v[1]) < 35 ? 1 : 0 });
+    }
+    if (botsFight && bot.gr.smokegrenade > 0 && now >= (ai.nextNadeAt ?? 0) && fires.length) {
+      const f = fires.find((x) => Math.hypot(x.o[0] - p.o[0], x.o[1] - p.o[1]) < 550 && clear(p.eye, [x.o[0], x.o[1], x.o[2] + 16]));
+      if (f) botThrowAt(bot, 'smokegrenade', f.o, now);
+    }
     if (botsFight && botCombat(bot, now)) return; // an enemy in sight: fight
     if (bomb.state === 'carried' && bomb.carrier === bot.id && inSite(p.o) && p.onGround) { setWeapon(bot, 'c4'); startPlant(bot); return simulate(bot, { fwd: 0, side: 0 }); }
     if (bomb.state === 'planted' && bot.team === 'ct' && Math.hypot(p.o[0] - bomb.o[0], p.o[1] - bomb.o[1]) < 48 && Math.abs(p.o[2] - bomb.o[2]) < 64) { startDefuse(bot); return simulate(bot, { fwd: 0, side: 0, duck: true }); }
@@ -361,6 +384,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       if (++ai.idx >= ai.path.length) { ai.holdUntil = now + (bot.team === 'ct' ? 3 + Math.random() * 6 : 1 + Math.random() * 2.5); ai.holdCrouch = Math.random() < 0.3; ai.path = null; return simulate(bot, { fwd: 0, side: 0 }); } // arrived: CTs dig in a while, Ts keep moving around the site
       wp = ai.path[ai.idx];
     }
+    if (fires.length && inActiveFire(wp.o)) { ai.path = null; ai.holdUntil = now + 0.4; return simulate(bot, { fwd: -1, side: 0 }); } // don't walk into fire
     const want = Math.atan2(wp.o[1] - p.o[1], wp.o[0] - p.o[0]), d = ((want - p.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     p.yaw += Math.sign(d) * Math.min(Math.abs(d), 7 * TICK);
     ai.stuck = Math.hypot(p.v[0], p.v[1]) < 30 ? ai.stuck + TICK : Math.max(ai.stuck - TICK, 0);
@@ -475,6 +499,10 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const gun = [...bot.owned].filter((k) => WEAPONS[k].slot <= 2 && (ai.ammo[k]?.mag ?? 1) + (ai.ammo[k]?.reserve ?? 1) > 0).sort((x, y) => WEAPONS[x].slot - WEAPONS[y].slot)[0];
     if (gun && bot.weapon !== gun) { setWeapon(bot, gun); ai.nextShot = now + 0.4; ai.reloadUntil = 0; }
     const eye = p.eye, aim = ai.head ? headOf(e) : chestOf(e), d = [aim[0] - eye[0], aim[1] - eye[1], aim[2] - eye[2]], dist = Math.hypot(...d);
+    if (botsFight && round.phase === 'live' && now >= (ai.nextNadeAt ?? 0) && dist > 380 && dist < 950 && bot.health > 35) {
+      const nade = ['molotov', 'incgrenade', 'hegrenade'].find((k) => bot.gr[k] > 0);
+      if (nade && (!inActiveFire(e.p.o) || nade === 'hegrenade')) botThrowAt(bot, nade, e.p.o, now);
+    }
     const settle = Math.exp(-(now - (ai.react - 0.25)) / 0.35); // aim error shrinks after first sight
     const wantYaw = Math.atan2(d[1], d[0]) + ai.err[0] * Math.min(settle, 1), wantPitch = Math.atan2(d[2], Math.hypot(d[0], d[1])) + ai.err[1] * Math.min(settle, 1);
     const dy = angTo(p.yaw, wantYaw), dp = wantPitch - p.pitch, turn = (Math.abs(dy) > 1 ? 16 : 9) * TICK; // rad per tick: a fast flick when far off target
@@ -505,11 +533,15 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
         if (gun) buy(b, gun);
       }
       if (b.money >= 650 && b.armor < 100) buy(b, b.money >= 1000 + 400 ? 'vesthelm' : 'kevlar');
+      if (botsFight) {
+        const fireNade = b.team === 't' ? 'molotov' : 'incgrenade';
+        for (const g of [fireNade, 'smokegrenade', 'hegrenade', 'flashbang']) if (b.money >= WEAPONS[g].price + 400) buy(b, g);
+      }
     }
   }
   function newRound() {
     autoBalance();
-    grenades.length = 0; smokes.length = 0; fires.length = 0;
+    grenades.length = 0; smokes.length = 0; fires.length = 0; drops.length = 0;
     round.tSite = Math.floor(Math.random() * (sites?.length ?? 1));
     round.number++; round.phase = 'freeze'; round.left = FREEZE; round.elapsed = 0; round.rescued = 0;
     Object.assign(bomb, { state: 'none', carrier: 0, o: null, explodeAt: 0, defuser: 0, planter: 0 });
@@ -590,6 +622,12 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     if (!target.hostage) { target.deaths++; attacker.kills += attacker !== target && attacker.team !== target.team ? 1 : -1; } // scoreboard: a team kill or suicide costs a frag
     if (target.hostage) give(attacker, -REWARD.hostageKill); // CS:S: killing a hostage costs you
     else if (attacker.team !== target.team) give(attacker, WEAPONS[wKey].melee ? REWARD.knife : REWARD.kill);
+    if (!target.hostage && !range) {
+      const pri = [...target.owned].find((k) => WEAPONS[k]?.slot === 1);
+      const sec = [...target.owned].find((k) => WEAPONS[k]?.slot === 2 && k !== DEFAULT_PISTOL[target.team]);
+      if (pri) dropWeapon(target, pri, false);
+      else if (sec) dropWeapon(target, sec, false);
+    }
     emit({ e: 'death', victim: target.id, killer: attacker.id, w: wKey, hs: group === 1, wb: wb ? 1 : 0, bone, dir, o: target.p.o.map(r2) });
   }
   // ---------- hits: lag compensation + validation ----------
@@ -747,9 +785,61 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     }
   }
 
-  // ---------- grenades ----------
-  const grenades = [], smokes = [], fires = [];
-  let nextGrenade = 1;
+  // ---------- grenades + world weapon drops ----------
+  const grenades = [], smokes = [], fires = [], drops = [];
+  let nextGrenade = 1, nextDropId = 1;
+  function dropWeapon(ent, wKey, toss) {
+    const w = WEAPONS[wKey];
+    if (!w || (w.slot !== 1 && w.slot !== 2) || !ent.owned.has(wKey)) return false;
+    ent.owned.delete(wKey);
+    let o = [...ent.p.o];
+    if (toss) {
+      const f = [Math.cos(ent.p.yaw), Math.sin(ent.p.yaw), 0], from = [o[0], o[1], o[2] + 40];
+      const r = trace(world, from, [from[0] + f[0] * 64, from[1] + f[1] * 64, from[2]], [-4, -4, -4], [4, 4, 4], bulletLimit);
+      o = r.end;
+    }
+    const pos = floorBelow(o);
+    drops.push({ id: nextDropId++, w: wKey, o: pos, yaw: ent.p.yaw ?? 0, grace: toss ? 0.9 : 0 });
+    if (ent.weapon === wKey) {
+      const next = [...ent.owned].sort((a, b) => WEAPONS[a].slot - WEAPONS[b].slot)[0] ?? 'knife';
+      ent.weapon = ''; setWeapon(ent, next, true);
+    }
+    emit({ e: 'weapondrop', id: ent.id, w: wKey, o: pos.map(r2) });
+    return true;
+  }
+  function useDrop(ent) {
+    if (!ent.alive || ent.hostage || round.phase === 'over') return false;
+    const fwd = [Math.cos(ent.p.yaw), Math.sin(ent.p.yaw)];
+    let bestIdx = -1, bestD = 90;
+    for (let i = 0; i < drops.length; i++) {
+      const d = drops[i], dx = d.o[0] - ent.p.o[0], dy = d.o[1] - ent.p.o[1], dist = Math.hypot(dx, dy);
+      if (dist < bestD && Math.abs(d.o[2] - ent.p.o[2]) < 72 && (dist < 32 || (fwd[0] * dx + fwd[1] * dy) / (dist || 1) > 0.45)) { bestIdx = i; bestD = dist; }
+    }
+    if (bestIdx < 0) return false;
+    const [d] = drops.splice(bestIdx, 1), slot = WEAPONS[d.w].slot;
+    const old = [...ent.owned].find((k) => WEAPONS[k]?.slot === slot);
+    if (old) dropWeapon(ent, old, false);
+    ent.owned.add(d.w); ent.weapon = ''; setWeapon(ent, d.w);
+    emit({ e: 'itempickup', id: ent.id, item: d.w });
+    return true;
+  }
+  function updateDrops() {
+    for (let i = drops.length - 1; i >= 0; i--) {
+      const d = drops[i];
+      if (d.grace > 0) { d.grace = Math.max(0, d.grace - TICK); continue; }
+      const slot = WEAPONS[d.w]?.slot;
+      for (const e of ents.values()) {
+        if (!e.alive || e.hostage || [...e.owned].some((k) => WEAPONS[k]?.slot === slot)) continue;
+        if (Math.hypot(e.p.o[0] - d.o[0], e.p.o[1] - d.o[1]) < 40 && Math.abs(e.p.o[2] - d.o[2]) < 64) {
+          e.owned.add(d.w);
+          if (slot === 1 || (e.bot && WEAPONS[d.w].price > (WEAPONS[e.weapon]?.price ?? 0))) { e.weapon = ''; setWeapon(e, d.w); }
+          emit({ e: 'itempickup', id: e.id, item: d.w });
+          drops.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
   const ZERO = [0, 0, 0];
   const cut = (ent, key) => { // one grenade less; fall back to a real weapon when the last one is gone
     ent.gr[key]--;
@@ -843,9 +933,12 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       else if (m.t === 'buy') buy(ent, m.item);
       else if (m.t === 'plant') { if (m.on) startPlant(ent); else cancelPlant(ent); }
       else if (m.t === 'name' && typeof m.name === 'string' && m.name.trim()) ent.name = m.name.trim().slice(0, 24).replace(/[<>&]/g, ''); // Options > player name
-      else if (m.t === 'use') { if (!useHostage(ent)) useDoor(ent); }
+      else if (m.t === 'use') { if (!useHostage(ent) && !useDoor(ent)) useDrop(ent); }
       else if (m.t === 'defuse') { if (m.on) startDefuse(ent); else if (ent.defusing) { ent.defusing = null; if (bomb.defuser === ent.id) bomb.defuser = 0; } }
-      else if (m.t === 'drop' && bomb.state === 'carried' && bomb.carrier === ent.id && ent.alive && ent.weapon === 'c4') dropBomb(ent, true);
+      else if (m.t === 'drop' && ent.alive && round.phase !== 'over') {
+        if (bomb.state === 'carried' && bomb.carrier === ent.id && ent.weapon === 'c4') dropBomb(ent, true);
+        else dropWeapon(ent, ent.weapon, true);
+      }
       else if (m.t === 'team' && (m.team === 'ct' || m.team === 't' || m.team === 'spec') && m.team !== ent.team) {
         // a spectator may join a team that has no more humans than the other one; a player may switch to one with fewer than theirs
         const full = m.team !== 'spec' && (ent.team === 'spec' ? humansOn(m.team) > humansOn(other(m.team)) : humansOn(m.team) >= humansOn(ent.team));
@@ -865,20 +958,21 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   function snapshot() {
     record();
     const list = [...ents.values()].filter((e) => e.team !== 'spec').map((e) => ({
-      id: e.id, team: e.team, bot: e.bot ? 1 : 0, name: e.name, o: e.p.o.map(r2), yaw: r2(e.p.yaw), pt: r2(e.p.pitch), v: [r2(e.p.v[0]), r2(e.p.v[1])],
+      id: e.id, team: e.team, bot: e.bot ? 1 : 0, name: e.name, o: e.p.o.map(r2), yaw: r2(e.p.yaw), pt: r2(e.p.pitch), v: [r2(e.p.v[0]), r2(e.p.v[1])], m: e.money,
       ar: e.armor > 0 ? 1 : 0, hm: e.helmet ? 1 : 0, duck: e.p.ducked ? 1 : 0, cr: e.p.oldDuck || e.p.ducked ? 1 : 0, alive: e.alive ? 1 : 0, hp: Math.round(e.health), w: e.weapon, g: e.p.onGround ? 1 : 0, k: e.kills, dt: e.deaths, pg: e.bot ? 0 : Math.round(e.ping),
     }));
     const rd = { winner: round.phase === 'over' ? round.winner : null, reason: round.phase === 'over' ? round.reason : null, bomb: bomb.state === 'planted' ? 1 : 0, phase: round.phase, left: r2(Math.max(round.left, 0)), scores: round.scores, number: round.number, alive: { ct: alive('ct'), t: alive('t') } };
     const bm = { s: bomb.state, o: bomb.o?.map(r2) ?? null, carrier: bomb.carrier, left: bomb.state === 'planted' ? r2(Math.max(bomb.explodeAt - now(), 0)) : 0, defusing: bomb.defuser && ents.get(bomb.defuser)?.defusing ? bomb.defuser : 0 };
     const gr = grenades.map((g) => ({ id: g.id, w: g.w, o: g.o.map(r2) })), smk = smokes.map((m) => ({ id: m.id, o: m.o.map(r2), age: r2(m.age) }));
     const flames = fires.map((f) => ({ id: f.id, o: f.o.map(r2), cells: f.cells.map((p) => p.map(r2)), age: r2(f.age) }));
+    const drp = drops.map((d) => ({ id: d.id, w: d.w, o: d.o.map(r2), yaw: r2(d.yaw) }));
     for (const e of ents.values()) {
       if (!e.ws) continue;
       const you = { id: e.id, yaw: e.p.yaw, ack: e.lastSeq, team: e.team, money: e.money, armor: Math.round(e.armor), hp: Math.round(e.health), alive: e.alive ? 1 : 0, owned: [...e.owned], gr: e.gr, weapon: e.weapon, o: e.p.o, v: e.p.v, kit: e.kit ? 1 : 0, helmet: e.helmet ? 1 : 0, inSite: e.team === 't' && inSite(e.p.o) ? 1 : 0 };
       const act = e.planting ?? e.defusing; // progress bar
       you.act = act ? { k: e.planting ? 'plant' : 'defuse', p: r2((now() - act.start) / (act.end - act.start)), len: r2(act.end - act.start) } : null;
       for (const f of P_FIELDS) you[f] = e.p[f];
-      if (e.ws.readyState === 1) e.ws.send(JSON.stringify({ t: 'snap', tick: tickNo, ents: list, you, round: rd, ev: events, gr, smokes: smk, fires: flames, bomb: bm, mv: movers.defs.length ? Array.from(movers.state, r2) : undefined }));
+      if (e.ws.readyState === 1) e.ws.send(JSON.stringify({ t: 'snap', tick: tickNo, ents: list, you, round: rd, ev: events, gr, smokes: smk, fires: flames, drops: drp, bomb: bm, mv: movers.defs.length ? Array.from(movers.state, r2) : undefined }));
     }
   }
 
@@ -897,6 +991,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     updateMovers();
     updateHurt();
     updateBomb();
+    updateDrops();
     updateRound();
     tickNo++; ticksRun++;
     snapshot(); events = [];
@@ -913,7 +1008,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     players: () => [...ents.values()].filter((e) => !e.bot).map((e) => ({ id: e.id, name: e.name, team: e.team, ping: Math.round(e.ping), kills: e.kills })),
     kick(id) { const e = ents.get(id); if (!e || e.bot) return false; e.ws?.close(4001, 'kicked'); return true; },
     bots: botsOn,
-    connect, ents, round, tick: () => tickNo, range, hostageMode, rescueZones, teamSize, maxPlayers: maxPlayers ?? teamSize * 2, bomb, inSite, sites, stats: () => ({ tickRate: TICK_RATE, ticks: ticksRun, measuredHz: ticksRun / ((performance.now() - started) / 1000), entities: ents.size, humans: humans().length }),
+    connect, ents, round, tick: () => tickNo, range, hostageMode, rescueZones, teamSize, maxPlayers: maxPlayers ?? teamSize * 2, bomb, drops, inSite, sites, stats: () => ({ tickRate: TICK_RATE, ticks: ticksRun, measuredHz: ticksRun / ((performance.now() - started) / 1000), entities: ents.size, humans: humans().length }),
     stop() { running = false; clearInterval(timer); },
   };
 }

@@ -24,7 +24,6 @@ assert(canCarryGrenade({ flashbang: 1 }, 'flashbang'), 'two flashes allowed');
 for (const [key, team, price] of [['molotov', 't', 400], ['incgrenade', 'ct', 600]]) {
   const item = BUY.flatMap((c) => c.items).find((i) => i.id === key);
   assert.equal(item.team, team); assert.equal(item.price, price);
-  assert(createIncendiaryModel(key).children.length >= 5, 'original procedural model is available without asset rebuild');
 }
 assert.equal(detonates('fire', { age: 0.2, impactNormal: [0, 0, 1] }), true);
 assert.equal(detonates('fire', { age: 0.2, impactNormal: [1, 0, 0] }), false, 'walls bounce');
@@ -53,12 +52,28 @@ const originalDocument = globalThis.document, originalFetch = globalThis.fetch;
 try {
   globalThis.document = { createElement: () => ({ getContext: () => ({ createRadialGradient: () => ({ addColorStop() {} }), fillRect() {} }) }) };
   globalThis.fetch = async (name) => new Response(fs.readFileSync(path.join(import.meta.dirname, 'public', name)));
-  const root = new THREE.Group(), effects = await createGrenades({ worldRoot: root, loadTex() {} });
+  const loadTex = (name, apply) => { const texture = new THREE.Texture(); texture.name = name; apply(texture); };
+  const root = new THREE.Group(), effects = await createGrenades({ worldRoot: root, loadTex });
+  for (const key of ['molotov', 'incgrenade']) {
+    const model = createIncendiaryModel(key);
+    assert.equal(model.scale.x, key === 'molotov' ? 1 / 3 : 1);
+    assert(model.children.length > 0 && model.children.every((mesh) =>
+      mesh.geometry.index.count > 0 && mesh.material.map.name.startsWith(`equipment-models/${key}-`)), 'textured CS2 mesh loaded');
+  }
   effects.sync([{ id: 1, w: 'molotov', o: [0, 0, 10] }, { id: 2, w: 'incgrenade', o: [50, 0, 10] }], [], [{ id: 3, cells, age: 1 }]);
   effects.update(1 / 60); assert(root.children.some((c) => c.isSprite), 'fire sprites are constructed');
+  const mollyTrail = root.children.find((c) => !c.isSprite)?.userData?.trail;
+  assert(mollyTrail?.isSprite, 'molotov flight model has a flame trail sprite');
+  let trailDisposed = 0; mollyTrail.material.addEventListener('dispose', () => trailDisposed++);
+  const flame = root.children.find((c) => c.isSprite && c.material.map.name === 'equipment-models/ground-fire.png');
+  assert(flame, 'ground fire uses the flame atlas');
+  const frame = flame.material.map;
+  effects.update(0.12);
+  assert.notEqual(flame.material.map, frame, 'ground fire advances frames');
   const sprites = root.children.filter((c) => c.isSprite); let disposed = 0;
   for (const sp of sprites) sp.material.addEventListener('dispose', () => disposed++);
   effects.sync([], [], []); assert.equal(root.children.length, 0); assert.equal(disposed, sprites.length, 'spent flame materials are disposed');
+  assert.equal(trailDisposed, 1, 'molotov flight trail material is disposed');
   effects.pop({ w: 'molotov', o: [0, 0, 0] }); effects.update(1);
   assert.equal(root.children.length, 0, 'ignition flare cleans itself up');
 } finally { globalThis.document = originalDocument; globalThis.fetch = originalFetch; }
@@ -126,7 +141,47 @@ try {
   assert.equal(t2.last.fires.length, 0, 'existing smoke prevents re-ignition');
   Object.assign(game.round, { phase: 'over', left: 0 }); advance(0.1);
   assert.equal(t2.last.fires.length, 0); assert.equal(t2.last.smokes.length, 0, 'round reset clears utility');
-  console.log('grenades ok: inventory, flight, walls, floors, damage, armor, teams, kills after disconnect, smoke, expiry, round reset');
+
+  // Bots buy utility, flee active fire, and extinguish nearby fire with smoke.
+  game.stop();
+  const botGame = createGame({ mapDir, bots: true, botsFight: true, teamSize: 2 });
+  function createClientFor(g, team) {
+    const ws = new EventEmitter(), c = { events: [], last: null, id: 0 };
+    ws.readyState = 1; ws.ping = () => ws.emit('pong');
+    ws.send = (raw) => { const d = JSON.parse(raw); if (d.t === 'welcome') c.id = d.id; else { c.last = d; c.events.push(...d.ev); } };
+    c.send = (m) => ws.emit('message', JSON.stringify(m));
+    g.connect(ws); c.send({ t: 'join', name: team, team }); sockets.push(ws); return c;
+  }
+  try {
+    const cBot = createClientFor(botGame, 't');
+    const actorBot = botGame.ents.get(cBot.id);
+    const botCt = [...botGame.ents.values()].find((e) => e.bot && e.team === 'ct');
+    const botT = [...botGame.ents.values()].find((e) => e.bot && e.team === 't');
+    const otherCt = [...botGame.ents.values()].find((e) => e.bot && e.team === 'ct' && e !== botCt);
+    botCt.money = botT.money = 16000;
+    botGame.round.phase = 'over'; botGame.round.left = 0; advance(0.1);
+    assert(botT.gr.molotov === 1 || botCt.gr.incgrenade === 1, 'bots buy fire grenades when wealthy');
+    advance(5.2);
+    actorBot.p.o = [-600, 0, 1]; actorBot.p.pitch = -1.3; actorBot.alive = true; actorBot.gr = { molotov: 1 }; actorBot.owned.add('molotov');
+    botCt.gr = {}; botCt.owned.delete('smokegrenade'); botCt.p.o = [0, 600, 1];
+    if (otherCt) { otherCt.p.o = [900, 900, 1]; otherCt.gr = {}; }
+    botT.p.o = [600, 0, 1]; botT.gr = {};
+    cBot.send({ t: 'throw', w: 'molotov', power: 0.25 }); advance(0.8);
+    assert(cBot.last.fires.length > 0, 'fire active under bot');
+    const fireOrigin = cBot.last.fires[0].o;
+    botCt.p.o = [fireOrigin[0], fireOrigin[1], fireOrigin[2] + 1]; botCt.p.v = [0, 0, 0]; botCt.alive = true; botCt.health = 100;
+    botT.alive = false; // keep botT from shooting botCt mid-test on the open test floor
+    advance(0.9);
+    const dOut = Math.hypot(botCt.p.o[0] - fireOrigin[0], botCt.p.o[1] - fireOrigin[1]);
+    assert(dOut > 60, 'bot sprints away from standing fire, moved ' + Math.round(dOut));
+    botCt.alive = false; // otherCt keeps CT team alive so the round remains live
+    botT.p.o = [fireOrigin[0] + 220, fireOrigin[1], fireOrigin[2] + 1]; botT.gr = { smokegrenade: 1 }; botT.owned.add('smokegrenade'); botT.ai.nextNadeAt = 0; botT.alive = true;
+    advance(3.2);
+    assert(cBot.last.smokes.length > 0 && cBot.last.fires.length === 0, 'bot throws smoke to extinguish nearby fire');
+  } finally {
+    botGame.stop();
+  }
+  console.log('grenades ok: inventory, flight, walls, floors, damage, armor, teams, kills after disconnect, smoke, expiry, round reset, bot fire AI');
 } finally {
   game?.stop(); for (const ws of sockets) ws.emit('close');
   globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; performance.now = originalNow;

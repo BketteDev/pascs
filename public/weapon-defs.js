@@ -118,7 +118,7 @@ export const WEAPONS = {
   hegrenade: { upper: 'GREN', name: 'HE Grenade', icon: 'hegrenade', slot: 4, model: 'v_eq_fraggrenade', world: 'w_eq_fraggrenade_thrown', price: 300, grenade: 'he', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'hegrenade/he_bounce-1', pin: 'pinpull' } },
   flashbang: { upper: 'GREN', name: 'Flashbang', icon: 'flashbang', slot: 4, model: 'v_eq_flashbang', world: 'w_eq_flashbang_thrown', price: 200, grenade: 'flash', max: 2, ...noGrenadeStats, sounds: { explode: 'flashbang/flashbang_explode1', bounce: 'flashbang/grenade_hit1', pin: 'pinpull' } },
   smokegrenade: { upper: 'GREN', name: 'Smoke Grenade', icon: 'smokegrenade', slot: 4, model: 'v_eq_smokegrenade', world: 'w_eq_smokegrenade_thrown', price: 300, grenade: 'smoke', max: 1, ...noGrenadeStats, sounds: { explode: 'smokegrenade/sg_explode', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
-  molotov: { upper: 'GREN', name: 'Molotov', icon: 'molotov', slot: 4, price: 400, team: 't', grenade: 'fire', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
+  molotov: { upper: 'GREN', name: 'Molotov', icon: 'molotov', slot: 4, price: 400, team: 't', grenade: 'fire', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'smokegrenade/grenade_hit1', light: 'molotov/ignite' } },
   incgrenade: { upper: 'GREN', name: 'Incendiary Grenade', icon: 'incgrenade', slot: 4, price: 600, team: 'ct', grenade: 'fire', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
 
   // ---- the bomb (Terrorists get one per round; not for sale) ----

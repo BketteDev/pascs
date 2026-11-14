@@ -1,0 +1,58 @@
+{
+  "molotov": [
+    {
+      "count": 1532,
+      "indices": 8181,
+      "pos": 0,
+      "nrm": 18384,
+      "uv": 36768,
+      "idx": 49024,
+      "texture": "molotov-0.png",
+      "transparent": false
+    },
+    {
+      "count": 1111,
+      "indices": 5964,
+      "pos": 65388,
+      "nrm": 78720,
+      "uv": 92052,
+      "idx": 100940,
+      "texture": "molotov-2.png",
+      "transparent": false
+    }
+  ],
+  "incgrenade": [
+    {
+      "count": 7773,
+      "indices": 33363,
+      "pos": 0,
+      "nrm": 93276,
+      "uv": 186552,
+      "idx": 248736,
+      "texture": "incgrenade-0.png",
+      "transparent": false
+    }
+  ],
+  "lighter": [
+    {
+      "count": 3743,
+      "indices": 12588,
+      "pos": 0,
+      "nrm": 44916,
+      "uv": 89832,
+      "idx": 119776,
+      "texture": "molotov-0.png",
+      "transparent": false
+    },
+    {
+      "count": 4,
+      "indices": 6,
+      "pos": 144952,
+      "nrm": 145000,
+      "uv": 145048,
+      "idx": 145080,
+      "texture": "molotov-1.png",
+      "transparent": true
+    }
+  ]
+}

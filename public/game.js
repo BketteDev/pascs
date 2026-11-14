@@ -183,7 +183,7 @@ const pending = []; // usercmds the server has not acknowledged yet: { cmd, o } 
 const hurtEl = document.getElementById('hurt');
 let lastBomb = null, bombs = null, defuseHeld = false;
 const plantBeeps = new Map(); // planter id -> interval of the arming beeps
-let deadAt = 0, killedBy = '', specIdx = 0; // local death: death cam on our body, then spectating teammates
+let deadAt = 0, killedBy = '', specIdx = 0, specFirstPerson = true, specTargetId = null; // local death: ragdoll, then 1st/3rd-person spectator
 let seq = 0, snapEvents = [], buyMenu = null, teamMenu = null, grenades = null, roster = [], flashUntil = 0, flashDur = 1, players = null, weapons = null; // players/weapons exist only after their assets load; snapshots can arrive earlier
 const WIN_TEXT = { ct: 'Counter-Terrorists Win!', t: 'Terrorists Win!' };
 const surfaceSound = (surface) => `player/footsteps/${surface}${1 + Math.floor(Math.random() * 4)}`;
@@ -222,7 +222,14 @@ function handleEvent(ev, now) {
   else if (ev.e === 'door') playAt(ev.open ? 'doors/default_move' : 'doors/door_wood_close1', ev.o, 0.7, 'world');
   else if (ev.e === 'break') { clearPane(ev.i); playAt(ev.glass ? `physics/glass/glass_sheet_break${1 + Math.floor(Math.random() * 2)}` : 'physics/wood/wood_plank_break1', ev.o, 0.9, 'world'); }
   else if (ev.e === 'deploy') { const snd = WEAPONS[ev.w]?.sounds.deploy; if (snd) playAt('weapons/' + snd, ev.o, 0.5, 'gear'); }
-  else if (ev.e === 'shot') { const snd = WEAPONS[ev.w]?.sounds.fire; if (snd) playAt('weapons/' + snd, [ev.o[0], ev.o[1], ev.o[2] + 56], 0.9, 'shot'); players?.shotFx(ev, weapons.addHole); }
+  else if (ev.e === 'shot') {
+    const snd = WEAPONS[ev.w]?.sounds.fire;
+    if (snd) {
+      if (ev.id === specTargetId) { play('weapons/' + snd, 0.75); weapons?.spectatorFire(ev.w); }
+      else playAt('weapons/' + snd, [ev.o[0], ev.o[1], ev.o[2] + 56], 0.9, 'shot');
+    }
+    if (ev.id !== specTargetId) players?.shotFx(ev, weapons.addHole);
+  }
   else if (ev.e === 'round') { if (ev.phase === 'live') play(['radio/go', 'radio/letsgo', 'radio/locknload', 'radio/moveout'][(Math.random() * 4) | 0], 0.8); // CS:S's round-start radio call
     if (ev.phase === 'freeze') { weapons?.refill(); weapons?.clearHoles(); players?.clearDecals(); } if (ev.phase === 'over' && ev.winner) play(ev.winner === 'ct' ? 'radio/ctwin' : 'radio/terwin', 0.9); } // "Counter-Terrorists win" / "Terrorists win"
   else if (ev.e === 'planting') { // the arming beeps of someone planting, until they finish or let go
@@ -288,10 +295,10 @@ function onSnap(d, arrival) {
   if (jumped) { player.yaw = y.yaw ?? player.yaw; player.pitch = 0; player.prev = { o: [...player.o], eyeZ: player.eyeZ }; } // respawn: take the spawn position and view
   if (y.hp < you.hp && y.alive) { hurtEl.style.opacity = Math.min(0.55, (you.hp - y.hp) / 60 + 0.18); setTimeout(() => { hurtEl.style.opacity = 0; }, 90); }
   if (you.alive && !y.alive && !deadAt) deadAt = arrival; // died (the death event may come a moment later)
-  if (!you.alive && y.alive) { deadAt = 0; killedBy = ''; specIdx = 0; players?.removeSelf(net.id); weapons.state.held = false; } // respawned: our body goes away
+  if (!you.alive && y.alive) { deadAt = 0; killedBy = ''; specIdx = 0; specTargetId = null; players?.setSpectated(null); weapons?.setSpectate(null); players?.removeSelf(net.id); weapons.state.held = false; } // respawned: our body goes away
   if (y.kit && !you.kit) play('items/defuser_equip', 0.8); // bought a defuse kit
   you = y; roundState = d.round;
-  hud.setStats({ money: y.money, hp: y.hp, armor: y.armor, helmet: y.helmet });
+  if (you.alive || !specTargetId) hud.setStats({ money: y.money, hp: y.hp, armor: y.armor, helmet: y.helmet });
   const reasonText = d.round.reason === 'bombed' ? 'Target Successfully Bombed!\n' : d.round.reason === 'defused' ? 'The Bomb Has Been Defused!\n'
     : d.round.reason === 'rescued' ? 'All Hostages have been rescued!\n' : d.round.reason === 'time' && d.round.winner === 't' ? 'Hostages have not been rescued!\n' : '';
   hud.setRound({ alive: d.round.alive, time: d.round.left, phase: d.round.phase, scores: d.round.scores, banner: d.round.phase === 'over' ? reasonText + (WIN_TEXT[d.round.winner] ?? '') : '', number: d.round.number, team: y.team, bomb: d.round.bomb });
@@ -299,6 +306,7 @@ function onSnap(d, arrival) {
   hud.setBomb({ carrying: y.alive && y.owned.includes('c4'), inSite: y.inSite, act: y.act });
   if (defuseHeld && (!y.alive || d.bomb?.s !== 'planted')) stopDefuse();
   weapons?.setLoadout(y.owned, y.weapon);
+  players?.syncDrops(d.drops ?? []);
   grenades?.sync(d.gr ?? [], d.smokes ?? [], d.fires ?? []);
   roster = d.ents; buyMenu?.refresh(); teamMenu?.refresh();
   for (const e of d.ev) snapEvents.push(e);
@@ -377,7 +385,8 @@ addEventListener('keydown', (e) => {
     const b = lastBomb.o;
     if (Math.hypot(b[0] - player.o[0], b[1] - player.o[1], (b[2] - player.o[2]) * 0.5) < 80) { defuseHeld = true; net.send({ t: 'defuse', on: true }); play('weapons/c4/c4_disarm', 0.7); }
   }
-  else if (is('use', e.code) && !e.repeat && !defuseHeld && you.alive && document.pointerLockElement) net.send({ t: 'use' }); // hostages: follow me / stay here
+  else if (is('use', e.code) && !e.repeat && !defuseHeld && you.alive && document.pointerLockElement) net.send({ t: 'use' }); // hostages / dropped weapons
+  if (!you.alive && is('jump', e.code) && !e.repeat && document.pointerLockElement && !uiOpen()) specFirstPerson = !specFirstPerson;
   if (e.code === 'Space' || is('jump', e.code)) e.preventDefault();
 }, { capture: true });
 // Scroll-wheel jump (+jump/-jump in one frame), the classic bhop bind. Must be a non-passive listener or the browser
@@ -385,7 +394,11 @@ addEventListener('keydown', (e) => {
 addEventListener('wheel', (e) => { if (document.pointerLockElement) e.preventDefault(); wheelJump = true; }, { passive: false });
 for (const ev of ['gesturestart', 'gesturechange', 'contextmenu', 'auxclick']) addEventListener(ev, (e) => { if (document.pointerLockElement) e.preventDefault(); }, { passive: false });
 function stopDefuse() { if (!defuseHeld) return; defuseHeld = false; net.send({ t: 'defuse', on: false }); }
-addEventListener('mousedown', (e) => { if (document.pointerLockElement && !you.alive && deadAt && e.button === 0) specIdx++; }); // dead: click to watch the next player
+addEventListener('mousedown', (e) => {
+  if (!document.pointerLockElement || you.alive || (!deadAt && you.team !== 'spec')) return;
+  if (e.button === 0) specIdx++;
+  else if (e.button === 2) specFirstPerson = !specFirstPerson;
+});
 addEventListener('keyup', (e) => { keys.delete(e.code); if (is('use', e.code)) stopDefuse(); if (is('scores', e.code)) scoreboard.show(false); });
 addEventListener('keydown', (e) => { if (is('scores', e.code) && !mainMenu.isOpen()) { e.preventDefault(); if (!e.repeat) scoreboard.show(true); } }); // hold Tab: scoreboard
 addEventListener('blur', () => scoreboard.show(false));
@@ -420,21 +433,38 @@ const rad = Math.PI / 180;
 // Death cam: first a third-person view of our own ragdoll ("Killed by X"), then a chase camera on a living teammate (anyone, if none).
 // The mouse still turns the view (it orbits the target); the camera is kept out of walls with a trace.
 const deathEl = document.getElementById('deathmsg');
-function deathCam(t) {
+function deathCam(t, dt) {
   const since = t - deadAt, cp = Math.cos(player.pitch);
   let target = null, text = killedBy ? `Killed by ${killedBy}` : 'You will play next round';
-  if (since < 3 && you.team !== 'spec') { const me = players.byId.get(net.id); target = me?.ragdoll ? [...me.ragdoll.P[0]] : [player.o[0], player.o[1], player.o[2] + 24]; }
-  else {
-    const alive = players.bots.filter((b) => !b.dead && !b.self), mates = alive.filter((b) => b.team === you.team), list = mates.length ? mates : alive;
-    if (list.length) { const b = list[specIdx % list.length]; target = [b.origin[0], b.origin[1], b.origin[2] + 56]; text = `Spectating ${b.name}  (click: next player)`; }
-    else target = [player.o[0], player.o[1], player.o[2] + 24];
+  const living = players.bots.filter((b) => !b.dead && !b.self), mates = living.filter((b) => b.team === you.team), list = mates.length ? mates : living;
+  if ((since >= 3 || you.team === 'spec') && list.length) {
+    const b = list[specIdx % list.length];
+    if (specFirstPerson) {
+      specTargetId = b.id; players.setSpectated(b.id);
+      const eyeZ = b.duck ? 46 : 64, bp = Math.cos(b.pitch ?? 0);
+      const fwd = [bp * Math.cos(b.yaw), bp * Math.sin(b.yaw), Math.sin(b.pitch ?? 0)];
+      weapons.setSpectate(b.weaponKey, dt, b.speed ?? 0);
+      hud.setStats({ money: b.money ?? 800, hp: b.health ?? 100, armor: b.armor ? 100 : 0, helmet: !!b.helmet });
+      hud.setAmmo(null, null); hud.setScope(false);
+      deathEl.textContent = `Spectating ${b.name} [1st Person]  (LMB: next | Space/RMB: 3rd person)`;
+      deathEl.style.display = 'block';
+      return [[b.origin[0], b.origin[1], b.origin[2] + eyeZ], fwd, b.yaw, b.pitch ?? 0, true];
+    }
+    target = [b.origin[0], b.origin[1], b.origin[2] + 56];
+    text = `Spectating ${b.name} [3rd Person]  (LMB: next | Space/RMB: 1st person)`;
+  } else if (since < 3 && you.team !== 'spec') {
+    const me = players.byId.get(net.id);
+    target = me?.ragdoll ? [...me.ragdoll.P[0]] : [player.o[0], player.o[1], player.o[2] + 24];
+  } else {
+    target = [player.o[0], player.o[1], player.o[2] + 24];
   }
+  specTargetId = null; players.setSpectated(null); weapons.setSpectate(null);
   const dist = since < 3 ? 70 + Math.min(since, 1.5) * 40 : 110, lift = since < 3 ? 46 : 14;
   const want = [target[0] - Math.cos(player.yaw) * cp * dist, target[1] - Math.sin(player.yaw) * cp * dist, target[2] - Math.sin(player.pitch) * dist + lift];
   const r = trace(playerWorld, target, want, [-6, -6, -6], [6, 6, 6], world.collision.length), cam = r.end;
   const d = [target[0] - cam[0], target[1] - cam[1], target[2] - cam[2]], l = Math.hypot(...d) || 1;
   deathEl.textContent = text; deathEl.style.display = 'block';
-  return [cam, d.map((v) => v / l)];
+  return [cam, d.map((v) => v / l), player.yaw, player.pitch, false];
 }
 const face = (cam, x, y, z, f) => { cam.position.set(x, z, -y); cam.lookAt(x + f[0], z + f[2], -(y + f[1])); }; // Source (z-up) -> three (y-up)
 renderer.compile(scene, camera);
@@ -454,20 +484,18 @@ renderer.setAnimationLoop((now) => {
       net.send(cmd);
     }
   }
-  const dead = !you.alive && !!deadAt;
-  document.body.classList.toggle('dead', dead);
+  const dead = !you.alive && (!!deadAt || you.team === 'spec');
   devPanel.update(); scoreboard.update();
   // like CS:S: a red warning top right once the server goes quiet (snapshots come 128 times a second), counting down cl_timeout
   const quiet = (performance.now() - net.lastMsg) / 1000, left = 60 - quiet;
   netWarn.style.display = !net.connected || quiet > 1 ? 'block' : 'none';
   if (!net.connected || quiet > 1) netWarn.textContent = net.kicked ? 'You were kicked from the server' : `WARNING:  Connection Problem
 ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
-  if (!dead) { weapons.update(dt); deathEl.style.display = 'none'; }
+  if (!dead) { weapons.update(dt); deathEl.style.display = 'none'; specTargetId = null; players.setSpectated(null); }
   grenades.update(dt);
   bombs.update(now / 1000);
   flashEl.style.opacity = now / 1000 < flashUntil ? Math.min(1, (flashUntil - now / 1000) / Math.min(flashDur, 2) * 1.6) : 0; // full white, then fades
   for (const ev of snapEvents.splice(0)) handleEvent(ev, now / 1000);
-  setListener(!you.alive && deadAt ? [camera.position.x, -camera.position.z, camera.position.y] : player.eye, player.yaw, player.pitch); // dead: hear from the death / spectator camera (three y-up -> Source z-up)
   ambience.update(now / 1000);
   players.update(now / 1000, player.eye);
   hud.update();
@@ -475,8 +503,10 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   const vfov = weapons.fov(FOV);
   for (const c of [camera, skyCamera]) if (c.fov !== vfov) { c.fov = vfov; c.updateProjectionMatrix(); }
   let e = player.eyeAt(acc / TICK), cp = Math.cos(pitch);
-  let f = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)];
-  if (dead) [e, f] = deathCam(now / 1000);
+  let f = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)], lyaw = player.yaw, lpitch = player.pitch, specFirst = false;
+  if (dead) [e, f, lyaw, lpitch, specFirst] = deathCam(now / 1000, dt);
+  document.body.classList.toggle('dead', dead && !specFirst);
+  setListener(dead ? e : player.eye, lyaw, lpitch);
   face(camera, e[0], e[1], e[2], f);
   renderer.clear();
   if (sky) { // sky camera = sky_camera origin + eye / scale
@@ -485,7 +515,7 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   renderer.render(skyScene, skyCamera);
   renderer.clearDepth();
   if (!q.has('skyonly')) renderer.render(scene, camera); // ?skyonly: debug the 3D skybox
-  if (!dead) weapons.render(innerWidth / innerHeight); // no gun in your hands when dead
+  if (!dead || specFirst) weapons.render(innerWidth / innerHeight); // viewmodel when alive or in 1st-person spectator
   frames++;
   if (now - fpsT > 500) { fps = Math.round((frames * 1000) / (now - fpsT)); frames = 0; fpsT = now; }
   info.textContent = `${fps} fps  speed ${Math.hypot(player.v[0], player.v[1]) | 0}/${player.maxSpeed}  stamina ${player.stamina | 0}  pos ${player.o.map(Math.round).join(' ')}  ${you.team.toUpperCase()}`;
