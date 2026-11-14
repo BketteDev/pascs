@@ -95,11 +95,15 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
             lighter.position.set(1.7, -0.2, 0.3).applyMatrix4(LEFT_HAND_BIND);
             socket.matrixAutoUpdate = false; socket.visible = false;
             socket.add(lighter); group.add(socket);
-            const wick = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
-            wick.position.set(2.15, 8.3, -0.2); wick.scale.set(2.7, 3.6, 1); wick.visible = false;
-            loadTex('equipment-models/molotov-1.png', (map) => { wick.material.map = map; wick.material.needsUpdate = true; });
+            const wick = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+            wick.position.set(2.15, 8.3, -0.2); wick.scale.set(2.8, 4.2, 1); wick.visible = false;
+            loadTex('equipment-models/ground-fire.png', (map) => {
+              const flame = map.clone();
+              flame.flipY = true; flame.repeat.set(0.25, 0.25); flame.offset.set(0, 0.75); flame.needsUpdate = true;
+              wick.material.map = flame; wick.material.needsUpdate = true;
+            });
             model.add(wick);
-            ignition = { socket, spark, wick };
+            ignition = { socket, spark, wick, model };
           }
           continue;
         }
@@ -118,7 +122,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       const seqs = info.sequences.map((q) => ({ ...q, skin: new Float32Array(bin, q.skin, q.frames * info.bones * 12), attach: q.attach >= 0 ? new Float32Array(bin, q.attach, q.frames * 3) : null }));
       if (ignition) {
         const reach = seqs.find((q) => q.activity === 'ACT_VM_PULLPIN');
-        seqs.push({ ...reach, frames: Math.min(24, reach.frames), loop: false, activity: 'ACT_VM_LIGHT' });
+        seqs.push({ ...reach, frames: Math.min(28, reach.frames), fps: reach.fps * 1.15, loop: false, activity: 'ACT_VM_LIGHT' });
       }
       holder.add(group);
       const snd = WEAPONS[key].sounds; // fire / empty / deploy / reload / ... decoded now, not on first use
@@ -167,6 +171,10 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       vm.incendiary.matrix.copy(vm.bones[0].matrixWorld);
       vm.incendiary.matrixWorldNeedsUpdate = true;
       vm.incendiary.visible = seq.activity !== 'ACT_VM_THROW' || t - start < 0.22;
+      if (vm.ignition?.model) {
+        const lighting = seq.activity === 'ACT_VM_LIGHT', elapsed = t - start;
+        vm.ignition.model.rotation.z = lighting ? -0.18 * Math.sin(Math.min(elapsed / 0.45, 1) * Math.PI) : Math.sin(t * 1.8) * 0.025;
+      }
     }
     if (vm.ignition) {
       const { socket, spark, wick } = vm.ignition, elapsed = t - start;
@@ -176,8 +184,18 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
         socket.matrix.copy(vm.bones[7].matrixWorld);
         socket.matrixWorldNeedsUpdate = true;
       }
-      spark.visible = lit && elapsed < 0.48;
+      if (spark) {
+        spark.visible = lighting && elapsed >= LIGHT_FRAME - 0.04 && elapsed < LIGHT_FRAME + 0.35;
+        if (spark.visible) spark.scale.setScalar(0.85 + 0.3 * Math.abs(Math.sin(t * 45)));
+      }
       wick.visible = lit || seq.activity === 'ACT_VM_THROW';
+      if (wick.visible) {
+        const fi = Math.floor(t * 24) % 16;
+        wick.material.map?.offset.set((fi % 4) * 0.25, 0.75 - Math.floor(fi / 4) * 0.25);
+        const fl = (lighting ? 3.8 : 2.8) + Math.sin(t * 37) * 0.5;
+        wick.scale.set(fl * 0.85, fl * 1.35, 1);
+        wick.material.rotation = Math.sin(t * 21) * 0.16;
+      }
       if (lit && !vm.anim.ignited) { vm.anim.ignited = true; play(WEAPONS[key].sounds.light, 0.55); }
     }
     if (!seq.attach) return null;
@@ -332,8 +350,8 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     let gained = false;
     for (const k of next) if (!owned.has(k)) { gained = true; ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve }; loadVm(k); }
     owned = next; if (gained) showList();
-    if (!owned.has(s.cur)) select(owned.has(s.last) ? s.last : bySlot(2) ?? 'knife');
-    else if (gained && current && current !== s.cur && owned.has(current)) select(current); // a purchase switches to the new weapon
+    if (!owned.has(s.cur)) select(current && owned.has(current) ? current : owned.has(s.last) ? s.last : bySlot(2) ?? 'knife');
+    else if (gained && current && current !== s.cur && owned.has(current)) select(current); // a purchase / pickup switches to the new weapon
   }
 
   function startReload() {
@@ -500,7 +518,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   document.addEventListener('pointerlockchange', () => { s.held = false; stopPlant(); if (s.pin) { s.pin = null; playAct(s.cur, 'ACT_VM_IDLE'); } });
   addEventListener('contextmenu', (e) => e.preventDefault());
   addEventListener('keydown', (e) => {
-    if (e.repeat || uiOpen()) return;
+    if (!alive() || e.repeat || uiOpen()) return;
     const n = Number(e.code.match(/^Digit([1-7])$/)?.[1] ?? 0);
     if (n === 4) { // cycle: the next owned grenade after the current one (the first when none is out)
       const mine = GRENADES.filter((k) => owned.has(k)), i = mine.indexOf(s.cur);
@@ -508,7 +526,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     } else if (n) { const k = n <= 3 ? bySlot(n) : n === 5 ? 'c4' : n === 6 ? 'smokegrenade' : GRENADES.find((g) => owned.has(g) && WEAPONS[g].grenade === 'fire'); if (k && owned.has(k)) select(k); } // 6 = smoke, 7 = incendiary
     else if (is('lastweapon', e.code)) select(s.last);
     else if (is('reload', e.code)) startReload();
-    else if (is('drop', e.code) && s.cur === 'c4') { stopPlant(); net.send({ t: 'drop' }); }
+    else if (is('drop', e.code) && (s.cur === 'c4' || def().slot === 1 || def().slot === 2)) { stopPlant(); net.send({ t: 'drop' }); }
   });
 
   // The firing decision: called on the mouse click itself (no waiting for the next frame) and every frame. Several shots may be due in
@@ -526,8 +544,47 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     s.wasHeld = s.held;
   }
 
+  function showFlash(key, t, until, zoom) {
+    const mz = poseViewModel(key, t);
+    if (t < until && !zoom && mz) {
+      flash.position.copy(mz).applyMatrix4(vms[key].group.matrix).add(holder.position);
+      if (!s.flashRoll) { s.flashRoll = [Math.random() * 6.28, Math.random() * 6.28, 0.7 + Math.random() * 0.5]; } // fixed for the whole flash so it doesn't strobe
+      flash.rotation.z = s.flashRoll[0]; flash.scale.setScalar(s.flashRoll[2]); flash.visible = true;
+      flashStar.position.copy(flash.position); flashStar.rotation.z = s.flashRoll[1]; flashStar.scale.setScalar(s.flashRoll[2]); flashStar.visible = true;
+    } else { flash.visible = flashStar.visible = false; s.flashRoll = null; }
+  }
+  function setSpectate(wKey, dt = 0, speed = 0) {
+    if (!wKey || !WEAPONS[wKey]) {
+      if (s.specCur) {
+        if (vms[s.specCur]) vms[s.specCur].group.visible = false;
+        if (vms[s.cur]) vms[s.cur].group.visible = true;
+        s.specCur = null; s.specFlashUntil = 0; flash.visible = flashStar.visible = false;
+      }
+      return;
+    }
+    if (s.zoom) setZoom(0);
+    if (!vms[wKey]) { loadVm(wKey); holder.visible = false; return; }
+    if (s.specCur !== wKey) {
+      if (s.specCur && vms[s.specCur]) vms[s.specCur].group.visible = false;
+      if (vms[s.cur]) vms[s.cur].group.visible = false;
+      s.specCur = wKey; vms[wKey].group.visible = true; playAct(wKey, 'ACT_VM_DRAW');
+    }
+    const sp = speed / 250;
+    s.bob += dt * sp * 9.5;
+    holder.position.set(Math.sin(s.bob) * 0.1 * Math.min(sp, 1.2), Math.sin(s.bob * 2) * 0.08 * Math.min(sp, 1.2), 0);
+    holder.visible = true;
+    showFlash(wKey, now(), s.specFlashUntil ?? 0, false);
+  }
+  function spectatorFire(wKey) {
+    const key = wKey ?? s.specCur;
+    if (!key || !vms[key]) return;
+    playAct(key, 'ACT_VM_PRIMARYATTACK');
+    if (!WEAPONS[key]?.melee && !WEAPONS[key]?.grenade) { s.specFlashUntil = now() + 0.06; s.flashRoll = null; }
+  }
+
   // ---------- per-frame ----------
   function update(dt) {
+    if (s.specCur) setSpectate(null);
     const t = now(), d = def(), a = ammo[s.cur];
     // view punch decay (Source DecayPunchAngle, sped up 4x so the aim snaps back to the starting point quickly)
     const len = Math.hypot(s.punch[0], s.punch[1]); // the view holds its pattern position while firing and recovers afterwards
@@ -567,13 +624,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     s.swayY = (s.swayY ?? 0) + (lim(dt > 0 ? (-dpitch / dt) * 0.04 : 0) - (s.swayY ?? 0)) * k; // looking up: it trails down
     holder.position.set(Math.sin(s.bob) * 0.12 * bobAmt + s.swayX, Math.sin(s.bob * 2) * 0.1 * bobAmt + s.swayY, 0);
     holder.visible = !s.zoom;
-    const mz = poseViewModel(s.cur, t);
-    if (t < s.flashUntil && !s.zoom && mz) {
-      flash.position.copy(mz).applyMatrix4(vms[s.cur].group.matrix).add(holder.position);
-      if (!s.flashRoll) { s.flashRoll = [Math.random() * 6.28, Math.random() * 6.28, 0.7 + Math.random() * 0.5]; } // fixed for the whole flash so it doesn't strobe
-      flash.rotation.z = s.flashRoll[0]; flash.scale.setScalar(s.flashRoll[2]); flash.visible = true;
-      flashStar.position.copy(flash.position); flashStar.rotation.z = s.flashRoll[1]; flashStar.scale.setScalar(s.flashRoll[2]); flashStar.visible = true;
-    } else { flash.visible = flashStar.visible = false; s.flashRoll = null; }
+    showFlash(s.cur, t, s.flashUntil, s.zoom);
   }
 
   function render(aspect) {
@@ -592,5 +643,5 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     for (const k of owned) ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
     s.reload = null; s.pin = null; s.throwing = null; s.emptyClicked = false; hudUpdate();
   }
-  return { debug, update, render, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned };
+  return { debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned };
 }

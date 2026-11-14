@@ -12,7 +12,6 @@ import { createGrenades } from './grenades.js';
 import { createBombs } from './bomb.js';
 import { createDevPanel } from './devpanel.js';
 import { createScoreboard } from './scoreboard.js';
-import { createAdminMenu } from './admin.js';
 import { createMainMenu, loadSettings } from './menu.js';
 import { binds, is } from './binds.js';
 import { createMovers } from './movers.js';
@@ -21,20 +20,10 @@ import { createAmbience } from './ambience.js';
 const q = new URLSearchParams(location.search);
 const MAP_NAME = /^[a-z0-9_]+$/.test(window.__map ?? '') ? window.__map : 'de_dust2'; // the server's map (server.config.json): public/maps/<name>/; also picks the map's agents (agents.js)
 document.title = 'CS:S Web - ' + MAP_NAME;
-for (const el of document.querySelectorAll('#loading .map')) el.textContent = MAP_NAME;
 // loading screen: staged progress, hidden once every texture has reached the GPU
 const loadingEl = document.getElementById('loading');
-const setLoad = (pct, text) => { document.getElementById('loadfill').style.width = pct + '%'; document.getElementById('loadtext').textContent = text; };
+const setLoad = (pct) => { document.getElementById('loadfill').style.width = pct + '%'; }; // the loading screen is just the agent and this bar
 setLoad(5, 'Loading map...');
-// menu music: loops on the loading screen and the menu, paused while playing. Browsers only allow audio after a
-// user gesture, so if autoplay is refused it starts on the first click / key press.
-const music = new Audio('ui/menu.mp3'); music.loop = true; music.volume = 0.6;
-const menuOpen = () => !document.pointerLockElement;
-let hasPlayed = false; // the song belongs to the title screen only: once you have been in the game, the Esc menu is silent
-const startMusic = () => { if (!hasPlayed && menuOpen() && !q.has('shot')) music.play().catch(() => {}); };
-startMusic();
-for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, startMusic, { once: true });
-document.addEventListener('pointerlockchange', () => { if (!menuOpen()) { hasPlayed = true; music.pause(); } });
 const gain = Number(q.get('gain') ?? 1.0); // lightmap overbright, tweak with ?gain=
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // Source's pipeline is gamma-space; keep all math raw
@@ -194,7 +183,7 @@ const pending = []; // usercmds the server has not acknowledged yet: { cmd, o } 
 const hurtEl = document.getElementById('hurt');
 let lastBomb = null, bombs = null, defuseHeld = false;
 const plantBeeps = new Map(); // planter id -> interval of the arming beeps
-let deadAt = 0, killedBy = '', specIdx = 0; // local death: death cam on our body, then spectating teammates
+let deadAt = 0, killedBy = '', specIdx = 0, specFirstPerson = true, specTargetId = null; // local death: ragdoll, then 1st/3rd-person spectator
 let seq = 0, snapEvents = [], buyMenu = null, teamMenu = null, grenades = null, roster = [], flashUntil = 0, flashDur = 1, players = null, weapons = null; // players/weapons exist only after their assets load; snapshots can arrive earlier
 const WIN_TEXT = { ct: 'Counter-Terrorists Win!', t: 'Terrorists Win!' };
 const surfaceSound = (surface) => `player/footsteps/${surface}${1 + Math.floor(Math.random() * 4)}`;
@@ -233,7 +222,14 @@ function handleEvent(ev, now) {
   else if (ev.e === 'door') playAt(ev.open ? 'doors/default_move' : 'doors/door_wood_close1', ev.o, 0.7, 'world');
   else if (ev.e === 'break') { clearPane(ev.i); playAt(ev.glass ? `physics/glass/glass_sheet_break${1 + Math.floor(Math.random() * 2)}` : 'physics/wood/wood_plank_break1', ev.o, 0.9, 'world'); }
   else if (ev.e === 'deploy') { const snd = WEAPONS[ev.w]?.sounds.deploy; if (snd) playAt('weapons/' + snd, ev.o, 0.5, 'gear'); }
-  else if (ev.e === 'shot') { const snd = WEAPONS[ev.w]?.sounds.fire; if (snd) playAt('weapons/' + snd, [ev.o[0], ev.o[1], ev.o[2] + 56], 0.9, 'shot'); players?.shotFx(ev, weapons.addHole); }
+  else if (ev.e === 'shot') {
+    const snd = WEAPONS[ev.w]?.sounds.fire;
+    if (snd) {
+      if (ev.id === specTargetId) { play('weapons/' + snd, 0.75); weapons?.spectatorFire(ev.w); }
+      else playAt('weapons/' + snd, [ev.o[0], ev.o[1], ev.o[2] + 56], 0.9, 'shot');
+    }
+    if (ev.id !== specTargetId) players?.shotFx(ev, weapons.addHole);
+  }
   else if (ev.e === 'round') { if (ev.phase === 'live') play(['radio/go', 'radio/letsgo', 'radio/locknload', 'radio/moveout'][(Math.random() * 4) | 0], 0.8); // CS:S's round-start radio call
     if (ev.phase === 'freeze') { weapons?.refill(); weapons?.clearHoles(); players?.clearDecals(); } if (ev.phase === 'over' && ev.winner) play(ev.winner === 'ct' ? 'radio/ctwin' : 'radio/terwin', 0.9); } // "Counter-Terrorists win" / "Terrorists win"
   else if (ev.e === 'planting') { // the arming beeps of someone planting, until they finish or let go
@@ -299,10 +295,10 @@ function onSnap(d, arrival) {
   if (jumped) { player.yaw = y.yaw ?? player.yaw; player.pitch = 0; player.prev = { o: [...player.o], eyeZ: player.eyeZ }; } // respawn: take the spawn position and view
   if (y.hp < you.hp && y.alive) { hurtEl.style.opacity = Math.min(0.55, (you.hp - y.hp) / 60 + 0.18); setTimeout(() => { hurtEl.style.opacity = 0; }, 90); }
   if (you.alive && !y.alive && !deadAt) deadAt = arrival; // died (the death event may come a moment later)
-  if (!you.alive && y.alive) { deadAt = 0; killedBy = ''; specIdx = 0; players?.removeSelf(net.id); weapons.state.held = false; } // respawned: our body goes away
+  if (!you.alive && y.alive) { deadAt = 0; killedBy = ''; specIdx = 0; specTargetId = null; players?.setSpectated(null); weapons?.setSpectate(null); players?.removeSelf(net.id); weapons.state.held = false; } // respawned: our body goes away
   if (y.kit && !you.kit) play('items/defuser_equip', 0.8); // bought a defuse kit
   you = y; roundState = d.round;
-  hud.setStats({ money: y.money, hp: y.hp, armor: y.armor, helmet: y.helmet });
+  if (you.alive || !specTargetId) hud.setStats({ money: y.money, hp: y.hp, armor: y.armor, helmet: y.helmet });
   const reasonText = d.round.reason === 'bombed' ? 'Target Successfully Bombed!\n' : d.round.reason === 'defused' ? 'The Bomb Has Been Defused!\n'
     : d.round.reason === 'rescued' ? 'All Hostages have been rescued!\n' : d.round.reason === 'time' && d.round.winner === 't' ? 'Hostages have not been rescued!\n' : '';
   hud.setRound({ alive: d.round.alive, time: d.round.left, phase: d.round.phase, scores: d.round.scores, banner: d.round.phase === 'over' ? reasonText + (WIN_TEXT[d.round.winner] ?? '') : '', number: d.round.number, team: y.team, bomb: d.round.bomb });
@@ -310,6 +306,7 @@ function onSnap(d, arrival) {
   hud.setBomb({ carrying: y.alive && y.owned.includes('c4'), inSite: y.inSite, act: y.act });
   if (defuseHeld && (!y.alive || d.bomb?.s !== 'planted')) stopDefuse();
   weapons?.setLoadout(y.owned, y.weapon);
+  players?.syncDrops(d.drops ?? []);
   grenades?.sync(d.gr ?? [], d.smokes ?? [], d.fires ?? []);
   roster = d.ents; buyMenu?.refresh(); teamMenu?.refresh();
   for (const e of d.ev) snapEvents.push(e);
@@ -322,13 +319,11 @@ const scoreboard = createScoreboard({ getRoster: () => roster, getRound: () => r
 try { await net.ready; } catch (e) { setLoad(30, 'Cannot join: the server is full or not running (npm start)'); throw e; }
 you = net.first.you; if (!(q.get('pos') && q.has('freeze'))) { applyServerState(you); player.yaw = you.yaw ?? 0; player.prev = { o: [...player.o], eyeZ: player.eyeZ }; }
 let devPanel = null;
-const adminMenu = createAdminMenu();
 // ---------- main menu (Join / Resume, Options, Quit) over the live game; Esc opens it while playing, Esc in it leaves fullscreen ----------
 let joined = false, settings = loadSettings();
 function applySettings(s) {
   settings = { ...settings, ...s };
   setVolumes({ master: settings.master, ambience: settings.ambience });
-  music.volume = settings.music;
   renderer.domElement.style.filter = settings.brightness === 1 ? '' : `brightness(${settings.brightness})`;
   if (renderer.getPixelRatio() !== pixelRatio(settings.renderScale)) renderer.setPixelRatio(pixelRatio(settings.renderScale));
   document.getElementById('info').style.display = settings.showFps || q.has('debug') ? 'block' : 'none';
@@ -341,7 +336,7 @@ const mainMenu = createMainMenu({
   onQuit: () => { document.exitFullscreen?.().catch(() => {}); window.close(); location.href = 'about:blank'; }, // a tab the user opened can't close itself: leave the game instead
   onSettings: applySettings,
 });
-const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || adminMenu.isOpen() || mainMenu.isOpen());
+const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen());
 weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, initial: { owned: you.owned, weapon: you.weapon } });
 devPanel = createDevPanel({ hud, weapons, range: window.__mode === 'range' });
 grenades = await createGrenades({ worldRoot, loadTex });
@@ -378,11 +373,10 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
     if (mainMenu.capturing()) return; // Esc cancels a rebind, handled by the Keyboard tab
     if (mainMenu.isOpen()) { if (mainMenu.windowOpen()) mainMenu.closeWindow(); else document.exitFullscreen?.().catch(() => {}); } // Esc in the menu: out of fullscreen
-    else if (!buyMenu?.isOpen() && !teamMenu?.isOpen() && !adminMenu.isOpen() && !devPanel?.isOpen()) { document.exitPointerLock(); mainMenu.open(); }
+    else if (!buyMenu?.isOpen() && !teamMenu?.isOpen() && !devPanel?.isOpen()) { document.exitPointerLock(); mainMenu.open(); }
     return;
   }
   if (mainMenu.isOpen()) return; // the menu (and the Keyboard tab's rebinding) owns the keyboard
-  if (e.code === 'F4') { e.preventDefault(); if (adminMenu.isOpen()) adminMenu.close(); else { document.exitPointerLock(); adminMenu.open(); } }
   if (e.target.closest?.('input, textarea, select')) return; // typing in a menu field is not game input
   if (document.pointerLockElement) e.preventDefault(); // while playing, game keys must not trigger browser shortcuts (Ctrl+D bookmark, Ctrl+S, F5, Ctrl+plus zoom...)
   keys.add(e.code);
@@ -391,7 +385,8 @@ addEventListener('keydown', (e) => {
     const b = lastBomb.o;
     if (Math.hypot(b[0] - player.o[0], b[1] - player.o[1], (b[2] - player.o[2]) * 0.5) < 80) { defuseHeld = true; net.send({ t: 'defuse', on: true }); play('weapons/c4/c4_disarm', 0.7); }
   }
-  else if (is('use', e.code) && !e.repeat && !defuseHeld && you.alive && document.pointerLockElement) net.send({ t: 'use' }); // hostages: follow me / stay here
+  else if (is('use', e.code) && !e.repeat && !defuseHeld && you.alive && document.pointerLockElement) net.send({ t: 'use' }); // hostages / dropped weapons
+  if (!you.alive && is('jump', e.code) && !e.repeat && document.pointerLockElement && !uiOpen()) specFirstPerson = !specFirstPerson;
   if (e.code === 'Space' || is('jump', e.code)) e.preventDefault();
 }, { capture: true });
 // Scroll-wheel jump (+jump/-jump in one frame), the classic bhop bind. Must be a non-passive listener or the browser
@@ -399,7 +394,11 @@ addEventListener('keydown', (e) => {
 addEventListener('wheel', (e) => { if (document.pointerLockElement) e.preventDefault(); wheelJump = true; }, { passive: false });
 for (const ev of ['gesturestart', 'gesturechange', 'contextmenu', 'auxclick']) addEventListener(ev, (e) => { if (document.pointerLockElement) e.preventDefault(); }, { passive: false });
 function stopDefuse() { if (!defuseHeld) return; defuseHeld = false; net.send({ t: 'defuse', on: false }); }
-addEventListener('mousedown', (e) => { if (document.pointerLockElement && !you.alive && deadAt && e.button === 0) specIdx++; }); // dead: click to watch the next player
+addEventListener('mousedown', (e) => {
+  if (!document.pointerLockElement || you.alive || (!deadAt && you.team !== 'spec')) return;
+  if (e.button === 0) specIdx++;
+  else if (e.button === 2) specFirstPerson = !specFirstPerson;
+});
 addEventListener('keyup', (e) => { keys.delete(e.code); if (is('use', e.code)) stopDefuse(); if (is('scores', e.code)) scoreboard.show(false); });
 addEventListener('keydown', (e) => { if (is('scores', e.code) && !mainMenu.isOpen()) { e.preventDefault(); if (!e.repeat) scoreboard.show(true); } }); // hold Tab: scoreboard
 addEventListener('blur', () => scoreboard.show(false));
@@ -434,78 +433,38 @@ const rad = Math.PI / 180;
 // Death cam: first a third-person view of our own ragdoll ("Killed by X"), then a chase camera on a living teammate (anyone, if none).
 // The mouse still turns the view (it orbits the target); the camera is kept out of walls with a trace.
 const deathEl = document.getElementById('deathmsg');
-// The title screen's backdrop: a slow tour of the map's landmarks (mid, each bombsite, hostages / rescue zone, both spawns). For each one a
-// camera spot is picked from the nav grid: open ground 400-1100 units away, raised to a vantage height, with a clear line of sight to it.
-// Each shot holds ~9 s with a gentle pan, then fades to the next.
-const SHOT_TIME = 9, FADE = 0.6;
-let menuShots = null, shotAt = 0, shotIdx = Number(q.get('tour') ?? 0); // ?tour=N: start on shot N (screenshots)
-const fadeEl = Object.assign(document.createElement('div'), { id: 'menufade' }); document.body.append(fadeEl);
-fetch(base + 'nav.json').then((r) => r.json()).then(({ nodes }) => {
-  const clear = (a, b) => trace(playerWorld, a, b, NOBOX, NOBOX, world.collision.length).fraction > 0.995;
-  const lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
-  for (const n of nodes) for (let k = 0; k < 2; k++) { lo[k] = Math.min(lo[k], n[k]); hi[k] = Math.max(hi[k], n[k]); } // (no spread: nav graphs run to 40k nodes)
-  const nearest = (p) => nodes.reduce((b, n) => (Math.hypot(n[0] - p[0], n[1] - p[1]) < Math.hypot(b[0] - p[0], b[1] - p[1]) ? n : b), nodes[0]);
-  const box = (z) => [(z.min[0] + z.max[0]) / 2, (z.min[1] + z.max[1]) / 2, z.min[2]];
-  const places = [nearest([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2]), ...(world.sites ?? []).map((st) => st.o), ...(world.hostages ?? []).slice(0, 2).map((h) => h.o),
-    ...(world.rescue ?? []).slice(0, 1).map(box), world.spawns.t[0]?.o, world.spawns.ct[0]?.o].filter(Boolean);
-  // openness: rays fanned over the frame (+-30 deg across, -11..+7 deg up/down), how far they get before a wall (capped), averaged;
-  // it is what tells a wide view of a site from a peek through a doorway
-  const openness = (eye, at) => {
-    const d = at.map((v, i) => v - eye[i]), yaw = Math.atan2(d[1], d[0]), pitch = Math.atan2(d[2], Math.hypot(d[0], d[1])), R = 2500;
-    let sum = 0, n = 0;
-    for (const dy of [-0.52, -0.26, 0, 0.26, 0.52]) for (const dp of [-0.2, 0, 0.12]) {
-      const y = yaw + dy, pp = pitch + dp;
-      sum += trace(playerWorld, eye, [eye[0] + Math.cos(pp) * Math.cos(y) * R, eye[1] + Math.cos(pp) * Math.sin(y) * R, eye[2] + Math.sin(pp) * R], NOBOX, NOBOX, world.collision.length).fraction * R; n++;
-    }
-    return sum / n;
-  };
-  const shots = [];
-  for (const p of places) {
-    const at = [p[0], p[1], p[2] + 40];
-    const cands = nodes.filter((n) => { const d = Math.hypot(n[0] - p[0], n[1] - p[1]); return d > 400 && d < 1300; }).sort(() => Math.random() - 0.5).slice(0, 250);
-    let best = null, bestScore = -1;
-    for (const n of cands) {
-      for (const lift of [200, 140, 80]) { // as high as the space allows: overview-ish shots read best
-        const eye = [n[0], n[1], n[2] + lift];
-        if (!clear([n[0], n[1], n[2] + 40], eye) || !clear(eye, at)) continue;
-        const score = openness(eye, at) + lift;
-        if (score > bestScore) { bestScore = score; best = eye; }
-        break;
-      }
-    }
-    if (best && !shots.some((sh) => Math.hypot(sh.eye[0] - best[0], sh.eye[1] - best[1]) < 300)) shots.push({ eye: best, at });
-  }
-  if (shots.length) { menuShots = shots; shotIdx %= shots.length; }
-}).catch(() => {});
-const MENU_CAM_FALLBACK = (() => { // no nav yet: above the first CT spawn
-  const sp = world.spawns.ct[0] ?? world.spawns.t[0] ?? { o: [0, 0, 0], yaw: 0 }, yaw = (sp.yaw * Math.PI) / 180, pitch = -0.12;
-  return [[sp.o[0], sp.o[1], sp.o[2] + 96], [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch)]];
-})();
-function menuCam(t) {
-  if (!menuShots) return MENU_CAM_FALLBACK;
-  if (!shotAt) shotAt = t;
-  let k = t - shotAt;
-  if (k > SHOT_TIME) { shotAt = t; k = 0; shotIdx = (shotIdx + 1) % menuShots.length; }
-  fadeEl.style.opacity = String(Math.max(0, 1 - k / FADE, 1 - (SHOT_TIME - k) / FADE)); // black between shots
-  const { eye, at } = menuShots[shotIdx], d = at.map((v, i) => v - eye[i]), l = Math.hypot(...d);
-  const pan = Math.sin((k / SHOT_TIME - 0.5) * Math.PI) * 0.07, c = Math.cos(pan), sn = Math.sin(pan); // a slow sweep across the subject
-  return [eye, [(d[0] * c - d[1] * sn) / l, (d[0] * sn + d[1] * c) / l, d[2] / l]];
-}
-function deathCam(t) {
+function deathCam(t, dt) {
   const since = t - deadAt, cp = Math.cos(player.pitch);
   let target = null, text = killedBy ? `Killed by ${killedBy}` : 'You will play next round';
-  if (since < 3 && you.team !== 'spec') { const me = players.byId.get(net.id); target = me?.ragdoll ? [...me.ragdoll.P[0]] : [player.o[0], player.o[1], player.o[2] + 24]; }
-  else {
-    const alive = players.bots.filter((b) => !b.dead && !b.self), mates = alive.filter((b) => b.team === you.team), list = mates.length ? mates : alive;
-    if (list.length) { const b = list[specIdx % list.length]; target = [b.origin[0], b.origin[1], b.origin[2] + 56]; text = `Spectating ${b.name}  (click: next player)`; }
-    else target = [player.o[0], player.o[1], player.o[2] + 24];
+  const living = players.bots.filter((b) => !b.dead && !b.self), mates = living.filter((b) => b.team === you.team), list = mates.length ? mates : living;
+  if ((since >= 3 || you.team === 'spec') && list.length) {
+    const b = list[specIdx % list.length];
+    if (specFirstPerson) {
+      specTargetId = b.id; players.setSpectated(b.id);
+      const eyeZ = b.duck ? 46 : 64, bp = Math.cos(b.pitch ?? 0);
+      const fwd = [bp * Math.cos(b.yaw), bp * Math.sin(b.yaw), Math.sin(b.pitch ?? 0)];
+      weapons.setSpectate(b.weaponKey, dt, b.speed ?? 0);
+      hud.setStats({ money: b.money ?? 800, hp: b.health ?? 100, armor: b.armor ? 100 : 0, helmet: !!b.helmet });
+      hud.setAmmo(null, null); hud.setScope(false);
+      deathEl.textContent = `Spectating ${b.name} [1st Person]  (LMB: next | Space/RMB: 3rd person)`;
+      deathEl.style.display = 'block';
+      return [[b.origin[0], b.origin[1], b.origin[2] + eyeZ], fwd, b.yaw, b.pitch ?? 0, true];
+    }
+    target = [b.origin[0], b.origin[1], b.origin[2] + 56];
+    text = `Spectating ${b.name} [3rd Person]  (LMB: next | Space/RMB: 1st person)`;
+  } else if (since < 3 && you.team !== 'spec') {
+    const me = players.byId.get(net.id);
+    target = me?.ragdoll ? [...me.ragdoll.P[0]] : [player.o[0], player.o[1], player.o[2] + 24];
+  } else {
+    target = [player.o[0], player.o[1], player.o[2] + 24];
   }
+  specTargetId = null; players.setSpectated(null); weapons.setSpectate(null);
   const dist = since < 3 ? 70 + Math.min(since, 1.5) * 40 : 110, lift = since < 3 ? 46 : 14;
   const want = [target[0] - Math.cos(player.yaw) * cp * dist, target[1] - Math.sin(player.yaw) * cp * dist, target[2] - Math.sin(player.pitch) * dist + lift];
   const r = trace(playerWorld, target, want, [-6, -6, -6], [6, 6, 6], world.collision.length), cam = r.end;
   const d = [target[0] - cam[0], target[1] - cam[1], target[2] - cam[2]], l = Math.hypot(...d) || 1;
   deathEl.textContent = text; deathEl.style.display = 'block';
-  return [cam, d.map((v) => v / l)];
+  return [cam, d.map((v) => v / l), player.yaw, player.pitch, false];
 }
 const face = (cam, x, y, z, f) => { cam.position.set(x, z, -y); cam.lookAt(x + f[0], z + f[2], -(y + f[1])); }; // Source (z-up) -> three (y-up)
 renderer.compile(scene, camera);
@@ -525,20 +484,18 @@ renderer.setAnimationLoop((now) => {
       net.send(cmd);
     }
   }
-  const dead = !you.alive && !!deadAt;
-  document.body.classList.toggle('dead', dead);
+  const dead = !you.alive && (!!deadAt || you.team === 'spec');
   devPanel.update(); scoreboard.update();
   // like CS:S: a red warning top right once the server goes quiet (snapshots come 128 times a second), counting down cl_timeout
   const quiet = (performance.now() - net.lastMsg) / 1000, left = 60 - quiet;
   netWarn.style.display = !net.connected || quiet > 1 ? 'block' : 'none';
-  if (!net.connected || quiet > 1) netWarn.textContent = `WARNING:  Connection Problem
+  if (!net.connected || quiet > 1) netWarn.textContent = net.kicked ? 'You were kicked from the server' : `WARNING:  Connection Problem
 ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
-  if (!dead) { weapons.update(dt); deathEl.style.display = 'none'; }
+  if (!dead) { weapons.update(dt); deathEl.style.display = 'none'; specTargetId = null; players.setSpectated(null); }
   grenades.update(dt);
   bombs.update(now / 1000);
   flashEl.style.opacity = now / 1000 < flashUntil ? Math.min(1, (flashUntil - now / 1000) / Math.min(flashDur, 2) * 1.6) : 0; // full white, then fades
   for (const ev of snapEvents.splice(0)) handleEvent(ev, now / 1000);
-  setListener(!you.alive && deadAt ? [camera.position.x, -camera.position.z, camera.position.y] : player.eye, player.yaw, player.pitch); // dead: hear from the death / spectator camera (three y-up -> Source z-up)
   ambience.update(now / 1000);
   players.update(now / 1000, player.eye);
   hud.update();
@@ -546,11 +503,10 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   const vfov = weapons.fov(FOV);
   for (const c of [camera, skyCamera]) if (c.fov !== vfov) { c.fov = vfov; c.updateProjectionMatrix(); }
   let e = player.eyeAt(acc / TICK), cp = Math.cos(pitch);
-  let f = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)];
-  if (dead) [e, f] = deathCam(now / 1000);
-  const touring = mainMenu.isOpen() && !joined;
-  if (touring) [e, f] = menuCam(now / 1000); // the title screen: shots of the map behind the menu
-  if (!touring && fadeEl.style.opacity !== '0') fadeEl.style.opacity = '0';
+  let f = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)], lyaw = player.yaw, lpitch = player.pitch, specFirst = false;
+  if (dead) [e, f, lyaw, lpitch, specFirst] = deathCam(now / 1000, dt);
+  document.body.classList.toggle('dead', dead && !specFirst);
+  setListener(dead ? e : player.eye, lyaw, lpitch);
   face(camera, e[0], e[1], e[2], f);
   renderer.clear();
   if (sky) { // sky camera = sky_camera origin + eye / scale
@@ -559,7 +515,7 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   renderer.render(skyScene, skyCamera);
   renderer.clearDepth();
   if (!q.has('skyonly')) renderer.render(scene, camera); // ?skyonly: debug the 3D skybox
-  if (!dead) weapons.render(innerWidth / innerHeight); // no gun in your hands when dead
+  if (!dead || specFirst) weapons.render(innerWidth / innerHeight); // viewmodel when alive or in 1st-person spectator
   frames++;
   if (now - fpsT > 500) { fps = Math.round((frames * 1000) / (now - fpsT)); frames = 0; fpsT = now; }
   info.textContent = `${fps} fps  speed ${Math.hypot(player.v[0], player.v[1]) | 0}/${player.maxSpeed}  stamina ${player.stamina | 0}  pos ${player.o.map(Math.round).join(' ')}  ${you.team.toUpperCase()}`;

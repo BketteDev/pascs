@@ -3,7 +3,7 @@
 export const ACTIONS = [
   ['forward', 'Move forward', 'KeyW'], ['back', 'Move back', 'KeyS'], ['left', 'Move left (strafe)', 'KeyA'], ['right', 'Move right (strafe)', 'KeyD'],
   ['jump', 'Jump', 'Space'], ['duck', 'Duck', 'ControlLeft'], ['walk', 'Walk', 'ShiftLeft'],
-  ['use', 'Use / defuse', 'KeyE'], ['reload', 'Reload', 'KeyR'], ['lastweapon', 'Last weapon used', 'KeyQ'], ['drop', 'Drop bomb', 'KeyG'],
+  ['use', 'Use / defuse', 'KeyE'], ['reload', 'Reload', 'KeyR'], ['lastweapon', 'Last weapon used', 'KeyQ'], ['drop', 'Drop weapon', 'KeyG'],
   ['buy', 'Buy menu', 'KeyB'], ['team', 'Select team', 'KeyM'], ['scores', 'Show scores', 'Tab'],
 ];
 export const DEFAULT_BINDS = Object.fromEntries(ACTIONS.map(([a, , k]) => [a, k]));

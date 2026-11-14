@@ -5,7 +5,7 @@ export function connectToServer({ name, map, onSnap, onNotice = () => {} }) {
   net.ready = new Promise((resolve, reject) => {
     ws.onopen = () => { net.connected = true; net.send({ t: 'join', name, team: 'spec' }); }; // in the main menu we watch; JOIN GAME picks a team
     ws.onerror = () => reject(new Error('cannot reach the game server'));
-    ws.onclose = (e) => { net.connected = false; if (e.code === 4000) return location.reload(); // admin changed the map
+    ws.onclose = (e) => { net.connected = false; net.kicked = e.code === 4001; if (e.code === 4000) return location.reload(); // 4001: kicked, 4000: map changed
     if (net.id === null) reject(new Error('server full')); };
     ws.onmessage = (m) => {
       net.lastMsg = performance.now();

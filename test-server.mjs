@@ -339,6 +339,38 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     console.log('spectate ok');
     g7.stop();
   }
+  { // weapon drop (G), death drop, walk-over pickup, E swap, and spectator money field
+    const bob = game.ents.get(b.id), alice = game.ents.get(a.id);
+    Object.assign(game.round, { phase: 'over', left: 0 }); await sleep(150);
+    await sleep(5100);
+    alice.alive = true; alice.health = 100; alice.money = 16000;
+    bob.alive = true; bob.health = 100; bob.armor = 0; bob.money = 16000;
+    a.send({ t: 'buy', item: 'm4a1' }); b.send({ t: 'buy', item: 'ak47' }); await sleep(100);
+    assert(me().owned.includes('m4a1') && a.last.ents.every((e) => typeof e.m === 'number'), 'bought m4a1 & ents carry spectator money');
+    a.send({ t: 'drop' }); await sleep(100);
+    assert(!me().owned.includes('m4a1') && a.last.drops.some((d) => d.w === 'm4a1'), 'G drops active primary weapon');
+    const dropPos = a.last.drops.find((d) => d.w === 'm4a1').o;
+    await sleep(950); // wait out toss grace before walk-over pickup
+    alice.p.o = [dropPos[0], dropPos[1], dropPos[2] + 1]; alice.p.v = [0, 0, 0];
+    await sleep(100);
+    assert(me().owned.includes('m4a1') && a.last.drops.length === 0, 'walking over drop with empty slot picks it up');
+    // Death drops primary weapon; E swaps with currently held primary
+    const { trace } = await import('./public/physics.js');
+    for (const r of [60, 90, 120]) for (let k = 0; k < 8; k++) {
+      const o = [alice.p.o[0] + Math.cos(k * 0.785) * r, alice.p.o[1] + Math.sin(k * 0.785) * r, alice.p.o[2] + 1];
+      if (!bob.p.tr(o, o).startSolid && trace(alice.p.world, alice.p.eye, [o[0], o[1], o[2] + 54], [0, 0, 0], [0, 0, 0], 1e9).fraction > 0.97) {
+        bob.p.o = o; bob.p.v = [0, 0, 0]; break;
+      }
+    }
+    alice.weapon = 'm4a1';
+    for (let i = 0; i < 4 && bob.alive; i++) { shoot(a, bob, 1, { w: 'm4a1' }); await sleep(150); }
+    assert(!bob.alive && a.last.drops.some((d) => d.w === 'ak47'), 'killing enemy drops their primary weapon');
+    const akDrop = a.last.drops.find((d) => d.w === 'ak47');
+    alice.p.o = [akDrop.o[0] - 25, akDrop.o[1], akDrop.o[2] + 1]; alice.p.yaw = 0; alice.p.v = [0, 0, 0];
+    a.send({ t: 'use' }); await sleep(100);
+    assert(me().owned.includes('ak47') && !me().owned.includes('m4a1') && a.last.drops.some((d) => d.w === 'm4a1'), 'E swaps m4a1 for dropped ak47');
+    console.log('weapon drop & pickup ok');
+  }
   { // shooting range: target bots in view of the shooters, no bomb, the dead come back
     const g4 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), range: true, teamSize: 4 });
     await sleep(400);

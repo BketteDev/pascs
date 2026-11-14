@@ -59,13 +59,23 @@ export async function createGrenades({ worldRoot, loadTex }) {
       if (!e) {
         if (!geos[g.w] && WEAPONS[g.w]?.grenade !== 'fire') continue;
         const mesh = geos[g.w] ? new THREE.Mesh(geos[g.w], mats[g.w]) : createIncendiaryModel(g.w);
-        if (WEAPONS[g.w].grenade === 'fire') mesh.rotation.x = Math.PI / 2;
+        if (WEAPONS[g.w].grenade === 'fire') {
+          mesh.rotation.x = Math.PI / 2;
+          const trail = new THREE.Sprite(new THREE.SpriteMaterial({ map: flameFrames[0] ?? fireTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+          trail.position.set(0, g.w === 'molotov' ? 24 : 5, 0);
+          trail.scale.setScalar(g.w === 'molotov' ? 36 : 10);
+          mesh.add(trail);
+          mesh.userData.trail = trail;
+        }
         worldRoot.add(mesh); e = { mesh, last: g.o }; live.set(g.id, e);
       }
       e.moved = Math.hypot(g.o[0] - e.last[0], g.o[1] - e.last[1], g.o[2] - e.last[2]) > 0.05; e.last = g.o;
       e.mesh.position.set(g.o[0], g.o[1], g.o[2]);
     }
-    for (const [id, e] of live) if (!seen.has(id)) { worldRoot.remove(e.mesh); live.delete(id); }
+    for (const [id, e] of live) if (!seen.has(id)) {
+      if (e.mesh.userData.trail) e.mesh.userData.trail.material.dispose();
+      worldRoot.remove(e.mesh); live.delete(id);
+    }
     const seenSmoke = new Set();
     for (const m of smokes) {
       seenSmoke.add(m.id);
@@ -106,14 +116,22 @@ export async function createGrenades({ worldRoot, loadTex }) {
   }
 
   function pop(ev) { // explosion / flash flare at the grenade
-    const he = ev.w === 'hegrenade' || WEAPONS[ev.w]?.grenade === 'fire', flash = ev.w === 'flashbang';
+    const fire = WEAPONS[ev.w]?.grenade === 'fire', he = ev.w === 'hegrenade' || fire, flash = ev.w === 'flashbang';
     if (!he && !flash) return;
     const sp = sprite(he ? fireTex : flashTex, true); sp.position.set(ev.o[0], ev.o[1], ev.o[2] + 10);
-    pops.push({ sp, t: 0, life: he ? 0.5 : 0.25, size: he ? 260 : 120 });
+    if (fire) sp.material.color.setHex(0xff7a22);
+    pops.push({ sp, t: 0, life: fire ? 0.55 : he ? 0.5 : 0.25, size: fire ? 160 : he ? 260 : 120 });
   }
 
   function update(dt) {
-    for (const e of live.values()) if (e.moved) { e.mesh.rotation.x += dt * 11; e.mesh.rotation.y += dt * 4; }
+    for (const e of live.values()) {
+      if (e.moved) { e.mesh.rotation.x += dt * 9; e.mesh.rotation.y += dt * 4; e.mesh.rotation.z += dt * 5; }
+      const tr = e.mesh.userData.trail;
+      if (tr) {
+        if (flameFrames.length) tr.material.map = flameFrames[Math.floor(performance.now() / 45) % 16];
+        tr.scale.setScalar((tr.parent.scale.x < 1 ? 36 : 10) * (0.85 + 0.3 * Math.sin(performance.now() * 0.03)));
+      }
+    }
     for (const c of clouds.values()) {
       const fade = Math.min(c.age / 0.8, 1) * Math.min((GRENADE.smokeTime - c.age) / 3, 1); // blooms in, thins out at the end
       for (const sp of c.puffs) { sp.material.opacity = 0.92 * Math.max(fade, 0); sp.material.rotation = sp.userData.rot + c.age * 0.05; sp.scale.setScalar(sp.userData.base * (0.45 + 0.55 * Math.min(c.age / 1.2, 1))); }

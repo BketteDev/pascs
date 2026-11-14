@@ -61,12 +61,14 @@ function gzipped(file, st) { // -> path of an up-to-date gzip copy
 function serve(req, res, file) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) {
+      // Linux containers are case-sensitive while Source asset names occasionally differ in case.
       const dir = path.dirname(file), base = path.basename(file).toLowerCase();
-      try {
-        const found = fs.readdirSync(dir).find((f) => f.toLowerCase() === base);
-        if (found) return serve(req, res, path.join(dir, found));
-      } catch {}
-      return res.writeHead(404).end('not found');
+      fs.readdir(dir, (rerr, list) => {
+        const match = !rerr && list.find((n) => n.toLowerCase() === base && n !== path.basename(file));
+        if (!match) return res.writeHead(404).end('not found');
+        serve(req, res, path.join(dir, match));
+      });
+      return;
     }
     const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`, head = { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' };
     if (req.headers['if-none-match'] === etag) return res.writeHead(304, head).end();
@@ -86,31 +88,34 @@ if (process.env.MODE) config.mode = process.env.MODE; // 'range': shooting range
 const builtMaps = () => fs.readdirSync(path.join(pub, 'maps')).filter((m) => fs.existsSync(path.join(pub, 'maps', m, 'world.json')));
 if (!builtMaps().includes(config.map)) { console.error(`map "${config.map}" is not built: public/maps/${config.map}/world.json is missing (npm run build)`); process.exit(1); }
 const wss = new WebSocketServer({ server, path: '/game' });
-const newGame = () => createGame({ mapDir: path.join(pub, 'maps', config.map), teamSize: config.teamSize, maxPlayers: config.maxPlayers, range: config.mode === 'range' });
+const newGame = () => createGame({ mapDir: path.join(pub, 'maps', config.map), teamSize: config.teamSize, maxPlayers: config.maxPlayers, bots: config.bots !== false, range: config.mode === 'range' });
 let game = newGame();
 // map / team size / max players change: a fresh game; everyone is disconnected with code 4000 and their page reloads into it
-function restart({ map, teamSize, maxPlayers }) {
+function restart({ map, teamSize, maxPlayers, bots }) {
   game.stop();
   for (const ws of wss.clients) ws.close(4000, 'map change');
-  Object.assign(config, { map, teamSize, maxPlayers });
+  Object.assign(config, { map, teamSize, maxPlayers, bots });
   game = newGame();
-  console.log(`admin: ${map}, ${game.teamSize}v${game.teamSize}, max ${game.maxPlayers} players`);
+  console.log(`admin: ${map}, ${game.teamSize}v${game.teamSize}, max ${game.maxPlayers} players, bots ${game.bots ? 'on' : 'off'}`);
 }
-// F4 admin menu: POST { password, map }. Password = adminPassword in server.config.json; no password set = admin off.
+// Server Admin (main menu): POST { password } checks it; + { list: true } the players, { kick: id }, or { map, teamSize, maxPlayers, bots } restarts. Password = adminPassword in server.config.json; no password set = admin off.
 const digest = (s) => crypto.createHash('sha256').update(String(s)).digest();
 function admin(req, res) {
   let body = '';
   req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
   req.on('end', () => {
-    const reply = (code, msg) => res.writeHead(code, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: code === 200, msg }));
+    const reply = (code, msg, extra) => res.writeHead(code, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: code === 200, msg, ...extra }));
     let m; try { m = JSON.parse(body); } catch { return reply(400, 'bad request'); }
     if (!config.adminPassword) return reply(403, 'admin is off: set adminPassword in server.config.json');
     if (!crypto.timingSafeEqual(digest(m.password), digest(config.adminPassword))) return reply(401, 'wrong password');
+    if (m.list) return reply(200, 'ok', { players: game.players(), bots: game.bots });
+    if (m.kick !== undefined) return game.kick(Number(m.kick)) ? reply(200, 'kicked') : reply(404, 'no such player');
     if (m.map === undefined) return reply(200, 'ok'); // login check only
     const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
     if (!builtMaps().includes(m.map)) return reply(400, 'unknown map');
     if (!int(m.teamSize, 1, 16)) return reply(400, 'team size must be 1-16');
     if (!int(m.maxPlayers, 1, 32)) return reply(400, 'max players must be 1-32');
+    if (typeof m.bots !== 'boolean') return reply(400, 'bots must be on or off');
     reply(200, 'restarting...'); restart(m);
   });
 }

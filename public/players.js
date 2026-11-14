@@ -118,6 +118,13 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
 
   // ---------- remote players (bots and other humans), driven by server snapshots ----------
   const byId = new Map(), bots = [];
+  let spectatedId = null;
+  const setSpectated = (id) => {
+    if (spectatedId === id) return;
+    const prev = byId.get(spectatedId); if (prev) prev.group.visible = true;
+    spectatedId = id;
+    const next = byId.get(id); if (next) { next.group.visible = false; next.shadow.visible = false; }
+  };
   // a character with its rifle: skinned meshes + the buffers pose() / skin() work on
   function makeRig(model, team, group, sunVis) {
     const def = info.models[model], wkey = team === 'ct' ? 'm4a1' : team === 't' ? 'ak47' : 'knife', wdef = info.weapons[wkey];
@@ -215,14 +222,14 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
       const ea = A.ents.get(id) ?? eb;
       let bot = byId.get(id) ?? spawnBot(eb);
       if (bot.team !== eb.team) { removeBot(bot); bot = spawnBot(eb); } // switched team: new agent model, and friend / enemy for hits
-      bot.name = eb.name; bot.health = eb.hp; bot.armor = eb.ar; bot.helmet = eb.hm; if (eb.w) setHeldWeapon(bot, eb.w);
+      bot.name = eb.name; bot.health = eb.hp; bot.armor = eb.ar; bot.helmet = eb.hm; bot.money = eb.m ?? 800; bot.duck = !!(eb.duck ?? eb.cr); if (eb.w) setHeldWeapon(bot, eb.w);
       if (!bot.ragdoll) {
         bot.origin = [0, 1, 2].map((a) => ea.o[a] + (eb.o[a] - ea.o[a]) * k);
         bot.yaw = lerpAngle(ea.yaw, eb.yaw, k);
         bot.pitch = (ea.pt ?? 0) + ((eb.pt ?? 0) - (ea.pt ?? 0)) * k; // where they look: the aim layer raises / lowers the gun
       }
       const v = [ea.v[0] + (eb.v[0] - ea.v[0]) * k, ea.v[1] + (eb.v[1] - ea.v[1]) * k];
-      bot.speed = Math.hypot(v[0], v[1]);
+      bot.speed = Math.hypot(v[0], v[1]); bot.vel = v;
       if (!eb.alive && !bot.dead) die(bot, 0, [0, 0, 0], now); // died without a death event (joined late): fall where it stands
       else if (eb.alive && bot.dead) revive(bot); // new round
       else if (!bot.dead) {
@@ -386,6 +393,8 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     syncBots(now, dt); stepBlood(dt); stepShots(dt);
     for (const bot of bots) {
       bot.friendly = bot.team === getMyTeam(); if (bot.friendly || bot.team === 'h') bot.spotted = true; // hostages: always on the radar
+      const hidden = bot.id === spectatedId;
+      bot.group.visible = !hidden;
       if (bot.ragdoll) { // simulated in world space: the group stays at the identity
         stepRagdoll(bot.ragdoll, dt);
         ragdollPose(bot.ragdoll, bot.def.bones, bot.world);
@@ -394,6 +403,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
         const pv = bot.ragdoll.P[0];
         bot.sunVis.value += (sunVisible(pv) - bot.sunVis.value) * Math.min(1, dt * 12); // every frame: the shadow stays under the body
         placeShadow(bot, pv);
+        if (hidden) bot.shadow.visible = false;
         continue;
       }
       if (!bot.dead && !bot.friendly) { // radar: an enemy shows while it has a clear line of sight to us
@@ -405,6 +415,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
       advance(bot, dt); pose(bot, now);
       bot.sunVis.value += (sunVisible(bot.origin) - bot.sunVis.value) * Math.min(1, dt * 12); // light + shadow follow the player every frame
       placeShadow(bot, bot.origin);
+      if (hidden) bot.shadow.visible = false;
     }
   }
 
@@ -568,6 +579,41 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     portraitGL.setClearColor(0, 0); portraitGL.render(sc.scene, sc.camera);
     const g2 = canvas.getContext('2d'); g2.clearRect(0, 0, w, h); g2.drawImage(portraitGL.domElement, 0, 0);
   }
+  // ---------- dropped world weapons ----------
+  const dropMats = new Map(), dropMeshes = new Map();
+  const dropMat = (tex) => {
+    if (!dropMats.has(tex ?? '')) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xd8d8d8, side: THREE.DoubleSide });
+      if (tex) loadTex('players/tex/' + tex, (t) => { mat.map = t; mat.needsUpdate = true; });
+      dropMats.set(tex ?? '', mat);
+    }
+    return dropMats.get(tex ?? '');
+  };
+  function syncDrops(list = []) {
+    const seen = new Set();
+    for (const d of list) {
+      seen.add(d.id);
+      let entry = dropMeshes.get(d.id);
+      if (!entry || entry.w !== d.w) {
+        if (entry) worldRoot.remove(entry.mesh);
+        const mesh = new THREE.Group(), inner = new THREE.Group(), box = new THREE.Box3(), tmp = new THREE.Box3();
+        for (const m of info.weapons[d.w]?.meshes ?? []) {
+          const geo = geometryFor(m);
+          geo.computeBoundingBox(); box.union(tmp.copy(geo.boundingBox));
+          inner.add(new THREE.Mesh(geo, dropMat(m.tex)));
+        }
+        const c = box.getCenter(new THREE.Vector3()), lift = (box.max.x - box.min.x) * 0.5 + 1.5;
+        inner.rotation.y = Math.PI / 2;
+        inner.position.set(-c.z, -c.y, c.x);
+        mesh.add(inner); worldRoot.add(mesh);
+        entry = { w: d.w, mesh, lift }; dropMeshes.set(d.id, entry);
+      }
+      entry.mesh.position.set(d.o[0], d.o[1], d.o[2] + entry.lift);
+      entry.mesh.rotation.set(0, 0, d.yaw ?? 0);
+    }
+    for (const [id, entry] of dropMeshes) if (!seen.has(id)) { worldRoot.remove(entry.mesh); dropMeshes.delete(id); }
+  }
+
   const agentNames = (team) => agentsFor(mapName, team).map((n) => AGENT_NAMES[n]);
-  return { renderTick: () => renderTick, clearDecals, shotFx, removeSelf, portraitScenes, solids, drawPortrait, agentNames, applySnapshot, onDeath, update, hitTest, feedback, alive, bots, byId };
+  return { renderTick: () => renderTick, clearDecals, shotFx, removeSelf, portraitScenes, solids, drawPortrait, agentNames, applySnapshot, onDeath, update, hitTest, feedback, alive, bots, byId, setSpectated, syncDrops };
 }
