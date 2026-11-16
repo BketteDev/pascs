@@ -204,6 +204,7 @@
   #touch-alt { position: absolute; right: 68px; bottom: 138px; width: 58px; height: 42px; border-radius: 10px; }
   #touch-use { position: absolute; right: 134px; bottom: 138px; width: 62px; height: 42px; border-radius: 10px; }
   #touch-drop { position: absolute; right: 162px; bottom: 18px; width: 46px; height: 36px; border-radius: 8px; font-size: 10px; }
+  #touch-inspect { position: absolute; right: 162px; bottom: 62px; width: 46px; height: 36px; border-radius: 8px; font-size: 10px; }
   #touch-weapons { position: fixed; left: 50%; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; gap: 5px; pointer-events: auto; z-index: 6; max-width: calc(100vw - 260px); flex-wrap: wrap; justify-content: center; }
   .t-wep { padding: 6px 9px; border-radius: 5px; background: rgba(12,14,18,.62); border: 1px solid rgba(255,255,255,.22); color: #ddd; font: bold 11px 'Trebuchet MS', Arial, sans-serif; touch-action: manipulation; }
   .t-wep.cur { background: rgba(255,176,0,.3); border-color: rgba(255,176,0,.85); color: #ffd27a; }
@@ -286,6 +287,7 @@
   }
   body.inmenu :is(#chat-log, #chat-box) { display: none !important; }
 </style>
+<link rel="stylesheet" href="ui/go-hud.css">
 <div id="loading">
   <span class="agent">-</span><!-- the agent glyph of the CS logo font (cslogo.ttf) -->
   <div class="bar"><div id="loadfill"></div></div>

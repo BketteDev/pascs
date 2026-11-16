@@ -3,6 +3,9 @@
 // Settings live in localStorage ('settings', plus 'crosshair', 'playerName', 'binds', 'adminPass') and are handed to onSettings.
 // With a valid admin password (Options > Multiplayer) an ADMIN item opens the server admin window (map, team size, max players).
 import { ACTIONS, DEFAULT_BINDS, binds, setBinds, keyName } from './binds.js';
+import { WEAPONS } from './weapon-defs.js';
+import { loadCosmetics, equippedCosmetic, equipCosmetic } from './cosmetics.js';
+import { GLYPH } from './hud.js';
 export const DEFAULTS = { sens: 2.5, invert: false, master: 1, ambience: 1, brightness: 1, showFps: false, renderScale: 1, texLow: false, touchMode: 'auto', touchSens: 1.0, touchLeftFire: true };
 const XH_DEFAULT = { color: '#32fa32', alpha: 1, length: 6, thickness: 2, gap: 3, outline: 0, dot: false, dynamic: true };
 const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === 'object' ? { ...d, ...v } : { ...d }; } catch { return { ...d }; } };
@@ -15,19 +18,20 @@ const adminPost = (body) => fetch('/api/admin', { method: 'POST', body: JSON.str
 export const loadName = () => { try { return localStorage.getItem('playerName') ?? ''; } catch { return ''; } };
 const esc = (t) => String(t).replace(/[<>&"]/g, '');
 
-export function createMainMenu({ onPlay, onQuit, onSettings, inGame }) {
+export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame }) {
   const el = document.createElement('div'); el.id = 'mainmenu'; document.body.append(el);
   el.innerHTML = `<div class="mm-logo"><b>COUNTER-STRIKE</b><span>SOURCE</span></div><div class="mm-items"></div><div class="mm-win" hidden></div>`;
   const items = el.querySelector('.mm-items'), win = el.querySelector('.mm-win');
   let shown = false, adminOk = false;
   if (loadAdminPass()) adminPost({ password: loadAdminPass() }).then((r) => { adminOk = !!r.ok; if (shown) renderItems(); }); // still valid on this server?
   function renderItems() {
-    const list = [[inGame() ? 'Resume Game' : 'Join Game', 'play'], ['Options', 'options'], ...(adminOk ? [['Admin', 'admin']] : []), ['Quit', 'quit']];
+    const list = [[inGame() ? 'Resume Game' : 'Join Game', 'play'], ['Inventory', 'inventory'], ['Options', 'options'], ...(adminOk ? [['Admin', 'admin']] : []), ['Quit', 'quit']];
     items.innerHTML = list.map(([t, a]) => `<div class="mm-item" data-a="${a}">${t}</div>`).join('');
   }
   items.addEventListener('click', (e) => {
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'play') { if (!loadName()) nameWindow(); else { close(); onPlay(); } }
+    else if (a === 'inventory') inventoryWindow();
     else if (a === 'options') optionsWindow();
     else if (a === 'admin') adminWindow();
     else if (a === 'quit') onQuit();
@@ -39,6 +43,53 @@ export function createMainMenu({ onPlay, onQuit, onSettings, inGame }) {
     win.innerHTML = `<div class="vg-title">${title}<i data-b="cancel">&#10005;</i></div><div class="vg-body">${body}</div><div class="vg-buttons">${buttons.map(([t, b]) => `<button data-b="${b}">${t}</button>`).join('')}</div>`;
   };
   const closeWin = () => { win.hidden = true; win.innerHTML = ''; win.onclick = null; };
+  async function inventoryWindow() {
+    frame('Inventory', '<div class="inventory-page"><div class="inventory-filter"><select aria-label="Weapon"></select><input type="search" placeholder="Search skins" aria-label="Search skins"></div><div class="inventory-grid"></div></div>', [['Close', 'cancel']]);
+    const page = win.querySelector('.inventory-page');
+    const weapon = page.querySelector('select'), search = page.querySelector('input'), grid = page.querySelector('.inventory-grid');
+    win.onclick = (e) => { if (e.target.dataset.b === 'cancel') closeWin(); };
+    const catalog = await loadCosmetics();
+    if (!page.isConnected) return;
+    for (const key of Object.keys(catalog).filter((k) => WEAPONS[k]).sort((a, b) => WEAPONS[a].name.localeCompare(WEAPONS[b].name))) {
+      weapon.add(new Option(WEAPONS[key].name, key));
+    }
+    if (!weapon.options.length) { grid.textContent = 'No skins available.'; return; }
+    if (catalog.knife) weapon.value = 'knife';
+    const render = () => {
+      grid.replaceChildren();
+      const key = weapon.value, selected = equippedCosmetic(key);
+      const items = [{ id: 'default', name: 'Default' }, ...catalog[key]];
+      for (const item of items.filter((x) => x.name.toLowerCase().includes(search.value.trim().toLowerCase()))) {
+        const card = document.createElement('button');
+        card.type = 'button'; card.className = 'inventory-card';
+        card.setAttribute('aria-pressed', item.id === selected ? 'true' : 'false');
+        const icon = document.createElement(item.preview ? 'img' : 'span');
+        if (item.preview) {
+          icon.alt = ''; icon.loading = 'lazy'; icon.src = 'cosmetics/' + item.preview;
+        } else {
+          icon.className = 'inventory-icon'; icon.setAttribute('aria-hidden', 'true');
+          icon.textContent = GLYPH[WEAPONS[key].icon ?? 'knife'];
+        }
+        const name = document.createElement('span'), status = document.createElement('small');
+        name.className = 'inventory-name';
+        name.textContent = item.name; status.textContent = item.id === selected ? 'Equipped' : '';
+        card.append(icon, name, status);
+        card.onclick = () => {
+          if (equippedCosmetic(key) === item.id) return;
+          equipCosmetic(key, item.id);
+          onCosmetic(key)?.catch(console.warn);
+          for (const button of grid.children) {
+            button.setAttribute('aria-pressed', button === card ? 'true' : 'false');
+            button.lastElementChild.textContent = button === card ? 'Equipped' : '';
+          }
+        };
+        grid.append(card);
+      }
+      if (!grid.children.length) grid.textContent = 'No matching skins.';
+    };
+    weapon.onchange = search.oninput = render;
+    render();
+  }
   function nameWindow() { // first JOIN GAME: pick a name (it is remembered; Options > Multiplayer changes it later)
     frame('Player Name', '<label class="vg-row">Name <input class="vg-text" maxlength="24" autocomplete="nickname"></label>', [['OK', 'ok'], ['Cancel', 'cancel']]);
     const input = win.querySelector('input'); input.focus();

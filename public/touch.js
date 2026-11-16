@@ -37,6 +37,7 @@ export function createTouchControls({
     <div id="touch-actions">
       <button type="button" id="touch-use" class="t-btn t-sm">USE</button>
       <button type="button" id="touch-drop" class="t-btn t-sm">DROP</button>
+      <button type="button" id="touch-inspect" class="t-btn t-sm" aria-label="Inspect weapon">LOOK</button>
       <button type="button" id="touch-alt" class="t-btn t-sm">ALT</button>
       <button type="button" id="touch-reload" class="t-btn t-sm">RELOAD</button>
       <button type="button" id="touch-duck" class="t-btn t-sm">CROUCH</button>
@@ -59,6 +60,7 @@ export function createTouchControls({
   const fireR = root.querySelector('#touch-fire-r');
   const useBtn = root.querySelector('#touch-use');
   const dropBtn = root.querySelector('#touch-drop');
+  const inspectBtn = root.querySelector('#touch-inspect');
   const altBtn = root.querySelector('#touch-alt');
   const reloadBtn = root.querySelector('#touch-reload');
   const duckBtn = root.querySelector('#touch-duck');
@@ -245,6 +247,7 @@ export function createTouchControls({
   stopBtn(duckBtn, () => { duckToggle = !duckToggle; });
   stopBtn(reloadBtn, () => { weapons.reload(); });
   stopBtn(dropBtn, () => { weapons.drop(); });
+  stopBtn(inspectBtn, () => { weapons.inspect(); });
   stopBtn(altBtn, () => { weapons.secondaryDown(); }, () => { weapons.secondaryUp(); });
 
   useBtn.addEventListener('touchstart', (e) => {
@@ -341,6 +344,7 @@ export function createTouchControls({
 
     const canDrop = cur === 'c4' || def?.slot === 1 || def?.slot === 2;
     dropBtn.style.display = canDrop ? 'flex' : 'none';
+    inspectBtn.style.display = def?.mag || def?.melee ? 'flex' : 'none';
 
     const defuseReady = nearBomb();
     useBtn.textContent = defuseReady ? 'DEFUSE' : 'USE';

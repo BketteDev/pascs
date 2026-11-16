@@ -1,0 +1,71 @@
+/* Web adaptation of the HXRPY CS:GO HUD port (original HUD by Luttz). */
+@font-face { font-family: 'GO Numbers'; src: url('./go-hud/numbers.ttf') format('truetype'); font-display: swap; }
+
+:root { --go-hud: #f3eee2; --go-panel: rgba(11, 15, 19, .72); --go-line: rgba(236, 226, 209, .24); }
+#radar { border-radius: 50%; box-shadow: 0 0 0 2px #161b1dd0, 0 0 0 3px #dddbce57; }
+.hudfont, #roundtime { font-family: 'GO Numbers', Arial, sans-serif; color: var(--go-hud); text-shadow: 0 1px 3px #000; }
+.panel { height: 47px; border-radius: 2px; border-bottom: 2px solid var(--go-line); background: var(--go-panel); gap: 8px; }
+.panel .num { top: 0; min-width: 48px; font-size: 35px; }
+.panel .glyph { font-size: 27px; }
+.panel .sep { background: var(--go-line); }
+.panel img { height: 23px; filter: none; }
+#ammobox { background: url('./go-hud/ammo.png') center / 100% 100%, var(--go-panel); }
+#money { bottom: auto; left: 20px; right: auto; top: 245px; opacity: 1; color: #9dd362; font-size: 28px; }
+
+#roundbar { top: 10px; bottom: auto; text-align: center; }
+#roundbar .row { height: 38px; padding: 0; gap: 0; border-radius: 2px; background: var(--go-panel); }
+#roundbar .team { display: grid; place-items: center; align-self: stretch; width: 46px; font: 20px 'GO Numbers', Arial, sans-serif; }
+#roundbar .team small { display: none; }
+#roundbar .team.ct { color: #b2d7ff; background: url('./go-hud/alive-ct.png') center / 100% 100%, #26455d; }
+#roundbar .team.t { color: #f8d387; background: url('./go-hud/alive-t.png') center / 100% 100%, #634c2c; }
+#clockicon { display: none; }
+#roundtime, #clockbomb { box-sizing: border-box; width: 80px; min-width: 80px; top: 0; text-align: center; font-size: 25px; }
+#roundscore { display: block; padding: 4px 5px; color: var(--go-hud); background: var(--go-panel); font: 12px Tahoma, sans-serif; }
+#banner { min-width: min(420px, 85vw); box-sizing: border-box; padding: 14px 22px; border-bottom: 2px solid var(--go-line); text-align: center; background: var(--go-panel); font: bold 22px Tahoma, sans-serif; }
+#wsel { color: var(--go-hud); }
+#wsel .w { border-radius: 2px; background: var(--go-panel); }
+#wsel .w.cur { background: #263545bc; border-color: #b6cad7a8; }
+#wsel .w-fire { color: var(--hud); }
+#wsel img { filter: none; }
+#feed .notice { border-radius: 2px; background: var(--go-panel); }
+
+#chat-log { box-sizing: border-box; width: min(440px, 92vw); gap: 3px; font: 13px/1.4 Tahoma, Arial, sans-serif; }
+#chat-log.open { padding: 8px 10px; background: var(--go-panel); border: 1px solid var(--go-line); border-radius: 2px; }
+.ch-msg { overflow-wrap: anywhere; }
+.ch-name { font-weight: bold; }
+.ch-tag { color: #e0c17d; }
+#chat-box { gap: 4px; padding: 4px; background: var(--go-panel); border: 1px solid var(--go-line); border-radius: 2px; font: 13px Tahoma, Arial, sans-serif; }
+#chat-box :is(.ch-scope, .ch-send, .ch-close, .ch-in) { border-radius: 1px; border: 1px solid var(--go-line); background: #151b22; color: #eeeae0; font: inherit; }
+#chat-box :is(.ch-scope, .ch-send, .ch-close):hover { background: #343c43; }
+#chat-box .ch-scope { min-width: 52px; }
+#chat-box .ch-scope.team { color: #f6d28a; border-color: #9d7e4e; background: #31291d; }
+#chat-box .ch-in:focus-visible { border-color: #c4bea9; }
+
+.mm-win:has(.inventory-page) { width: min(740px, 94vw); }
+.inventory-page { display: grid; gap: 10px; }
+.inventory-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.inventory-filter select, .inventory-filter input { color: #e5e8de; background: #3e4939; border: 1px solid #272e24; padding: 5px; }
+.inventory-filter input { flex: 1; min-width: 90px; }
+.inventory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 7px; max-height: min(390px, 51vh); overflow: auto; }
+.inventory-card { min-height: 94px; display: grid; gap: 5px; place-items: center; padding: 8px; color: #e5e8de; background: #414b3b; border: 1px solid #252d22; cursor: pointer; font: inherit; }
+.inventory-card:hover, .inventory-card[aria-pressed="true"] { border-color: #d4c389; background: #596251; }
+.inventory-card img { width: 92px; height: 42px; object-fit: contain; }
+.inventory-icon { height: 42px; font: 38px/42px csd; }
+.inventory-card small { color: #e6cc8e; min-height: 1em; }
+
+@media (min-width: 801px) {
+  body:not(.touch-mode) #healthbox { left: 18px; }
+  body:not(.touch-mode) #armorbox { left: 142px; }
+}
+body.touch-mode #roundbar .team { width: 28px; font-size: 14px; }
+body.touch-mode #roundtime, body.touch-mode #clockbomb { width: 54px; min-width: 54px; font-size: 20px; top: 0; }
+body.touch-mode #roundscore { font-size: 10px; }
+body.touch-mode .panel .num { top: 0; }
+@media (min-width: 541px) {
+  body.touch-mode #chat-box, body.touch-mode #chat-log { top: calc(68px + env(safe-area-inset-top, 0px)); }
+  body.touch-mode #chat-log.open { top: calc(112px + env(safe-area-inset-top, 0px)); }
+}
+@media (max-width: 540px) {
+  body.touch-mode #chat-box { top: calc(138px + env(safe-area-inset-top, 0px)); }
+  body.touch-mode #chat-log.open { top: calc(182px + env(safe-area-inset-top, 0px)); }
+}

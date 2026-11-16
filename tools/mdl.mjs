@@ -1,5 +1,6 @@
 // Minimal Source model loader: .mdl (v44-49) + .vvd + .dx90.vtx -> static triangle meshes (LOD 0, body group 0, skin 0 by default).
 import fs from 'fs';
+import path from 'node:path';
 
 /**
  * @param {string} base path without extension, e.g. ".../models/props/de_dust/du_crate_64x64"
@@ -146,11 +147,11 @@ const f16 = (h) => { // IEEE half -> float
   const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 31, m = h & 1023;
   return e === 0 ? s * m * 2 ** -24 : e === 31 ? (m ? NaN : s * Infinity) : s * (1 + m / 1024) * 2 ** (e - 15);
 };
-const eulerQuat = ([x, y, z]) => { // Source AngleQuaternion(RadianEuler)
+export const eulerQuat = ([x, y, z]) => { // Source AngleQuaternion(RadianEuler)
   const sr = Math.sin(x / 2), cr = Math.cos(x / 2), sp = Math.sin(y / 2), cp = Math.cos(y / 2), sy = Math.sin(z / 2), cy = Math.cos(z / 2);
   return [sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy, cr * cp * cy + sr * sp * sy];
 };
-const quatMatrix = ([x, y, z, w], [px, py, pz]) => [
+export const quatMatrix = ([x, y, z, w], [px, py, pz]) => [
   1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * w * z, 2 * x * z + 2 * w * y, px,
   2 * x * y + 2 * w * z, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * w * x, py,
   2 * x * z - 2 * w * y, 2 * y * z + 2 * w * x, 1 - 2 * x * x - 2 * y * y, pz,
@@ -177,10 +178,20 @@ export function loadSkeleton(file) {
     const o = I(244) + i * 92;
     return { name: str(o + I(o)), bone: I(o + 8), local: Array.from({ length: 12 }, (_, k) => F(o + 12 + k * 4)) };
   });
+  const blockTable = I(356), blockCount = I(352);
+  let external;
+  const animationBlock = (block) => {
+    if (!block) return b;
+    if (block < 0 || block >= blockCount) throw new Error(`Invalid animation block ${block} in ${file}`);
+    const local = path.join(path.dirname(file), path.basename(file, '.mdl') + '.ani');
+    external ??= fs.readFileSync(local);
+    const start = I(blockTable + block * 8), end = I(blockTable + block * 8 + 4);
+    if (start < 0 || end <= start || end > external.length) throw new Error(`Invalid animation range in ${file}`);
+    return external.subarray(start, end);
+  };
   const anims = Array.from({ length: I(180) }, (_, i) => {
     const o = I(184) + i * 100;
-    if (I(o + 52) !== 0) throw new Error('external animation blocks are not supported');
-    return { o, name: str(o + I(o + 4)), fps: F(o + 8), loop: !!(I(o + 12) & 1), delta: !!(I(o + 12) & 4), frames: I(o + 16), animindex: I(o + 56), sectionindex: I(o + 80), sectionframes: I(o + 84) };
+    return { o, name: str(o + I(o + 4)), fps: F(o + 8), loop: !!(I(o + 12) & 1), delta: !!(I(o + 12) & 4), frames: I(o + 16), animblock: I(o + 52), animindex: I(o + 56), sectionindex: I(o + 80), sectionframes: I(o + 84) };
   });
   const sequences = Array.from({ length: I(188) }, (_, i) => {
     const o = I(192) + i * 212;
@@ -202,7 +213,7 @@ export function loadSkeleton(file) {
   const includes = Array.from({ length: I(336) }, (_, i) => { const o = I(340) + i * 8; return str(o + I(o + 4)); });
 
   // value stream (mstudioanimvalue_t): runs of {valid, total} headers followed by `valid` shorts
-  const animValue = (p, frame) => {
+  const animValue = (p, frame, b) => {
     let k = frame;
     while (b.readUInt8(p + 1) <= k) { k -= b.readUInt8(p + 1); p += (b.readUInt8(p) + 1) * 2; if (b.readUInt8(p + 1) === 0) return 0; }
     const valid = b.readUInt8(p);
@@ -210,10 +221,15 @@ export function loadSkeleton(file) {
   };
   // local pos/quat of every bone at one frame
   function pose(anim, frame) {
-    let base = anim.o + anim.animindex, f = frame;
-    if (anim.sectionframes) { const s = Math.floor(frame / anim.sectionframes); base = anim.o + I(anim.o + anim.sectionindex + s * 8 + 4); f = frame - s * anim.sectionframes; }
+    let block = anim.animblock, index = anim.animindex, f = frame;
+    if (anim.sectionframes) {
+      const section = Math.floor(frame / anim.sectionframes), o = anim.o + anim.sectionindex + section * 8;
+      block = I(o); index = I(o + 4); f = frame - section * anim.sectionframes;
+    }
     const dl = anim.delta; // delta animations (aim matrix, gestures) store offsets: no bone rest pose underneath
     const out = bones.map((bn) => (dl ? { pos: [0, 0, 0], quat: [0, 0, 0, 1] } : { pos: bn.pos, quat: bn.quat }));
+    if (block < 0 || (!block && !index)) return out;
+    const b = animationBlock(block), base = block ? index : anim.o + index;
     for (let p = base; ;) {
       const bone = b.readUInt8(p), flags = b.readUInt8(p + 1), next = b.readInt16LE(p + 2), d = p + 4, bn = bones[bone];
       if (bn) {
@@ -228,14 +244,14 @@ export function loadSkeleton(file) {
           const x = c(0), y = c(21), z = c(42), w = Math.sqrt(Math.max(0, 1 - x * x - y * y - z * z));
           quat = [x, y, z, hi & 0x80000000 ? -w : w];
         } else if (flags & 0x08) { // animated euler
-          quat = eulerQuat([0, 1, 2].map((k) => { const off = b.readInt16LE(d + k * 2); return (dl ? 0 : bn.rot[k]) + (off ? animValue(d + off, f) * bn.rotscale[k] : 0); }));
+          quat = eulerQuat([0, 1, 2].map((k) => { const off = b.readInt16LE(d + k * 2); return (dl ? 0 : bn.rot[k]) + (off ? animValue(d + off, f, b) * bn.rotscale[k] : 0); }));
         }
         if (flags & 0x01) { // Vector48
           const q = d + (flags & 0x02 ? 6 : 0) + (flags & 0x20 ? 8 : 0);
           pos = [f16(b.readUInt16LE(q)), f16(b.readUInt16LE(q + 2)), f16(b.readUInt16LE(q + 4))];
         } else if (flags & 0x04) { // animated position
           const q = d + (flags & 0x08 ? 6 : 0);
-          pos = [0, 1, 2].map((k) => { const off = b.readInt16LE(q + k * 2); return (dl ? 0 : bn.pos[k]) + (off ? animValue(q + off, f) * bn.posscale[k] : 0); });
+          pos = [0, 1, 2].map((k) => { const off = b.readInt16LE(q + k * 2); return (dl ? 0 : bn.pos[k]) + (off ? animValue(q + off, f, b) * bn.posscale[k] : 0); });
         }
         out[bone] = { pos, quat };
       }

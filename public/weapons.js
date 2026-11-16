@@ -7,6 +7,7 @@ import { trace } from './physics.js';
 import { march } from './ballistics.js';
 import { audio, play as playSound, playAt, preload } from './audio.js';
 import { is } from './binds.js';
+import { loadCosmetics, equippedCosmetic } from './cosmetics.js';
 
 const rad = Math.PI / 180;
 const VM_FOV = 54; // viewmodel_fov (horizontal degrees at 4:3, like the world fov)
@@ -65,13 +66,24 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 300);
   const holder = new THREE.Group(); scene.add(holder);
   const vms = {}, loading = new Map(); // key -> { group, bones, seqs, anim }
-  const loadVm = (key) => {
+  const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); white.needsUpdate = true;
+  const catalog = await loadCosmetics();
+  const getLook = (key) => catalog[key]?.find((item) => item.id === equippedCosmetic(key));
+  const buildVm = (key, look) => {
     const fire = WEAPONS[key].grenade === 'fire', source = fire ? 'smokegrenade' : key;
-    if (!loading.has(key)) loading.set(key, fetch(`weapons/${source}.bin`).then((r) => r.arrayBuffer()).then(async (bin) => {
+    const cacheKey = look ? key + '/' + look.id : key;
+    if (!loading.has(cacheKey)) loading.set(cacheKey, (async () => {
+      const modelBase = look?.model ? 'cosmetics/' + look.model : null;
+      const [bin, info] = await Promise.all([
+        fetch(modelBase ? modelBase + '.bin.gz' : `weapons/${source}.bin`).then((r) => {
+          if (!r.ok) throw new Error('Unable to load view model: ' + cacheKey);
+          return modelBase ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer() : r.arrayBuffer();
+        }),
+        modelBase ? fetch(modelBase + '.json').then((r) => r.json()) : manifest[source],
+      ]);
       if (fire) await loadIncendiaryModels(loadTex);
-      const info = manifest[source];
       const group = new THREE.Group(); group.visible = false;
-      group.matrixAutoUpdate = false; group.matrix.copy(WEAPONS[source].rightHanded ? MODEL_TO_CAMERA_RH : MODEL_TO_CAMERA);
+      group.matrixAutoUpdate = false; group.matrix.copy((info.rightHanded ?? WEAPONS[source].rightHanded) ? MODEL_TO_CAMERA_RH : MODEL_TO_CAMERA);
       // bones carry the baked skinning matrices directly (boneInverse = identity)
       const bones = Array.from({ length: info.bones }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; });
       const skeleton = new THREE.Skeleton(bones);
@@ -111,9 +123,10 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
         geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(bin, m.uv, m.count * 2), 2));
         geo.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array(bin, m.bw, m.count * 4), 4));
         geo.setAttribute('skinIndex', new THREE.BufferAttribute(new Float32Array(bin, m.bi, m.count * 4), 4));
-        const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); white.needsUpdate = true;
+        if (m.indexCount) geo.setIndex(new THREE.BufferAttribute(new Uint32Array(bin, m.idx, m.indexCount), 1));
         const mat = new THREE.ShaderMaterial({ uniforms: { map: { value: white }, cutoff: { value: m.alpha === 1 ? 0.5 : 0 } }, vertexShader: vmVertex, fragmentShader: vmFragment, transparent: m.alpha === 2 });
-        if (m.tex) loadTex('weapons/tex/' + m.tex, (t) => { mat.uniforms.map.value = t; });
+        const file = look?.textures?.[m.material] ?? m.tex;
+        if (file) loadTex(modelBase || look?.textures?.[m.material] ? 'cosmetics/' + file : 'weapons/tex/' + file, (t) => { mat.uniforms.map.value = t; });
         const mesh = new THREE.SkinnedMesh(geo, mat);
         mesh.bindMode = THREE.DetachedBindMode; mesh.bind(skeleton, new THREE.Matrix4());
         mesh.frustumCulled = false;
@@ -127,10 +140,43 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       holder.add(group);
       const snd = WEAPONS[key].sounds; // fire / empty / deploy / reload / ... decoded now, not on first use
       preload(...Object.values(snd).flatMap((v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? (typeof v[1] === 'string' && !Array.isArray(v[0]) ? [v[1]] : v.map((x) => x[1])) : [])).map((n) => 'weapons/' + n));
-      return (vms[key] = { group, bones, seqs, incendiary, ignition, anim: null });
-    }));
-    return loading.get(key);
+      return { group, bones, skeleton, seqs, incendiary, ignition, cacheKey, anim: null };
+    })().catch((error) => { loading.delete(cacheKey); throw error; }));
+    return loading.get(cacheKey);
   };
+  async function loadVm(key) {
+    const look = getLook(key);
+    const vm = await buildVm(key, look).catch((error) => {
+      if (!look) throw error;
+      console.warn(error);
+      return buildVm(key);
+    });
+    const old = vms[key];
+    if (look !== getLook(key)) {
+      if (vm !== old && vm.cacheKey !== key) releaseVm(vm);
+      return loadVm(key);
+    }
+    if (old && vm !== old) { vm.group.visible = old.group.visible; releaseVm(old); }
+    vms[key] = vm;
+    return vm;
+  }
+
+  function releaseVm(vm) {
+    if (vm.released) return;
+    vm.released = true;
+    loading.delete(vm.cacheKey);
+    holder.remove(vm.group);
+    vm.group.traverse((object) => {
+      object.geometry?.dispose();
+      object.material?.dispose();
+    });
+    vm.skeleton.dispose();
+  }
+
+  function refreshCosmetic(key) {
+    if (!vms[key]) return;
+    return loadVm(key).then(() => { if (s.cur === key) playAct(key, 'ACT_VM_IDLE'); });
+  }
   await loadVm(initial.weapon);
   // CS:S muzzle flash: the game's own additive sprites (a fireball and a star), randomly rotated and scaled each shot
   const tl = new THREE.TextureLoader();
@@ -143,6 +189,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   // ---------- view model animation (baked sequences, chosen by activity like the engine) ----------
   const findSeqs = (vm, act) => vm.seqs.filter((q) => q.activity === act);
   function playAct(key, act, fallback) {
+    if (key === s.cur) s.inspectEnd = 0;
     const vm = vms[key], sil = WEAPONS[key].silenced ? findSeqs(vm, act + '_SILENCED') : []; // the USP-S plays its suppressed sequences
     const list = sil.length ? sil : findSeqs(vm, act).length ? findSeqs(vm, act) : findSeqs(vm, fallback ?? '');
     if (!list.length) return 0;
@@ -157,7 +204,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       if (!vm.anim || !vm.anim.seq.activity.startsWith('ACT_VM_IDLE')) playAct(key, 'ACT_VM_IDLE');
     }
     const { seq, start } = vm.anim, n = vm.bones.length;
-    let f = (t - start) * seq.fps;
+    let f = Math.max(0, (t - start) * seq.fps);
     f = seq.loop ? f % seq.frames : Math.min(f, seq.frames - 1);
     const f0 = Math.floor(f), f1 = seq.loop ? (f0 + 1) % seq.frames : Math.min(f0 + 1, seq.frames - 1), w = f - f0;
     const A = f0 * n * 12, B = f1 * n * 12, S = seq.skin;
@@ -328,7 +375,10 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     hud.setScope(!!s.zoom);
   };
   const applySpeed = () => { player.maxSpeed = s.zoom ? 150 : def().speed; };
-  const setZoom = (z) => { s.zoom = z; applySpeed(); hudUpdate(); };
+  const setZoom = (z) => {
+    if (z && (s.inspectEnd || vms[s.cur].anim?.seq.activity === 'ACT_VM_INSPECT')) playAct(s.cur, 'ACT_VM_IDLE');
+    s.zoom = z; applySpeed(); hudUpdate();
+  };
 
   let owned = new Set(initial.owned); // the server owns the loadout (buy menu); we mirror it
   const showList = () => hud.showWeapons([...owned].map((k) => ({ key: k, slot: WEAPONS[k].slot, icon: WEAPONS[k].icon })).sort((a, b) => a.slot - b.slot), s.cur);
@@ -444,8 +494,10 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       const body = targets()?.hitTest(eye, dir, range);
       if (body) { targets().feedback(body, eye, dir); net.send(hitMsg(body, eye, dir, { alt: alt ? 1 : 0 })); }
       else if (hit) { addHole(hit.pos, hit.n); play(d.sounds.hitWall, 0.7); } else play(d.sounds.fire, 0.6);
-      const slashes = alt ? findSeqs(vms[s.cur], 'ACT_VM_SECONDARYATTACK').concat(vms[s.cur].seqs.filter((q) => /stab/i.test(q.name))) : findSeqs(vms[s.cur], 'ACT_VM_HITCENTER').filter((q) => /slash/.test(q.name));
-      if (slashes.length) vms[s.cur].anim = { seq: slashes[Math.floor(Math.random() * slashes.length)], start: t };
+      const vm = vms[s.cur];
+      const slashes = alt ? findSeqs(vm, 'ACT_VM_SECONDARYATTACK').concat(vm.seqs.filter((q) => /stab/i.test(q.name))) : findSeqs(vm, 'ACT_VM_HITCENTER').filter((q) => /slash|light_/i.test(q.name));
+      s.inspectEnd = 0;
+      if (slashes.length) vm.anim = { seq: slashes[Math.floor(Math.random() * slashes.length)], start: t };
       return;
     }
     const burst = d.burst && s.burst[s.cur];
@@ -530,6 +582,20 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   }
   const canReload = () => { const d = def(), a = ammo[s.cur]; return !!(d.mag && !s.reload && a.mag < d.mag && a.reserve > 0); };
   const hasAlt = () => { const d = def(); return d.scope ? 'scope' : d.melee ? 'stab' : d.burst ? 'burst' : d.grenade ? 'lob' : null; };
+  function inspect() {
+    const d = def(), t = now();
+    if ((!d.mag && !d.melee) || !alive() || !canFire() || uiOpen() || s.reload || s.held || s.zoom || t < Math.max(s.deployEnd, s.nextFire)) return;
+    const vm = vms[s.cur], sequences = findSeqs(vm, 'ACT_VM_INSPECT');
+    if (sequences.length) {
+      const seq = sequences[(vm.inspectIndex ?? 0) % sequences.length];
+      vm.inspectIndex = (vm.inspectIndex ?? 0) + 1;
+      s.inspectEnd = 0;
+      vm.anim = { seq: { ...seq, loop: false }, start: t };
+    } else {
+      playAct(s.cur, 'ACT_VM_IDLE');
+      s.inspectEnd = t + 1.65;
+    }
+  }
   addEventListener('mousedown', (e) => {
     if (!canFire() || uiOpen() || !alive()) return; // dead / spectating: clicks pick who to watch, they don't shoot
     if (e.button === 0) primaryDown();
@@ -551,6 +617,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     else if (is('lastweapon', e.code)) select(s.last);
     else if (is('reload', e.code)) startReload();
     else if (is('drop', e.code)) drop();
+    else if (is('inspect', e.code)) inspect();
   });
 
   // The firing decision: called on the mouse click itself (no waiting for the next frame) and every frame. Several shots may be due in
@@ -597,6 +664,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     s.bob += dt * sp * 9.5;
     holder.position.set(Math.sin(s.bob) * 0.1 * Math.min(sp, 1.2), Math.sin(s.bob * 2) * 0.08 * Math.min(sp, 1.2), 0);
     holder.visible = true;
+    holder.rotation.set(0, 0, 0);
     showFlash(wKey, now(), s.specFlashUntil ?? 0, false);
   }
   function spectatorFire(wKey) {
@@ -622,7 +690,10 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     stepFx(dt); stepShards(dt);
     hud.setSpread(Math.tan((crosshairDeg() * Math.PI) / 180), fov(73.74)); // fov(): the zoom-aware vertical fov (73.74 = CS:S 90 at 4:3)
 
-    if (uiOpen()) s.held = false;
+    if (uiOpen()) {
+      s.held = false;
+      if (s.inspectEnd || vms[s.cur].anim?.seq.activity === 'ACT_VM_INSPECT') playAct(s.cur, 'ACT_VM_IDLE');
+    }
     if (s.throwing && t >= s.throwing.end) { // next grenade of the same kind comes up, if any are left
       s.throwing = null;
       if (owned.has(s.cur)) { playAct(s.cur, 'ACT_VM_DRAW'); s.deployEnd = t + 0.8; }
@@ -647,6 +718,11 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     s.swayX = (s.swayX ?? 0) + (lim(dt > 0 ? (dyaw / dt) * 0.05 : 0) - (s.swayX ?? 0)) * k;   // turning right: the gun trails left
     s.swayY = (s.swayY ?? 0) + (lim(dt > 0 ? (-dpitch / dt) * 0.04 : 0) - (s.swayY ?? 0)) * k; // looking up: it trails down
     holder.position.set(Math.sin(s.bob) * 0.12 * bobAmt + s.swayX, Math.sin(s.bob * 2) * 0.1 * bobAmt + s.swayY, 0);
+    if (s.inspectEnd && t >= s.inspectEnd) s.inspectEnd = 0;
+    const progress = s.inspectEnd ? 1 - (s.inspectEnd - t) / 1.65 : 0;
+    const lift = Math.sin(progress * Math.PI);
+    holder.position.x -= 2.5 * lift; holder.position.y += 1.8 * lift;
+    holder.rotation.set(-0.08 * lift, 0.13 * lift, (d.melee ? -0.44 : -0.26) * lift);
     holder.visible = !s.zoom;
     showFlash(s.cur, t, s.flashUntil, s.zoom);
   }
@@ -667,5 +743,5 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     for (const k of owned) ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
     s.reload = null; s.pin = null; s.throwing = null; s.emptyClicked = false; hudUpdate();
   }
-  return { debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned, primaryDown, primaryUp, secondaryDown, secondaryUp, reload: startReload, drop, canReload, hasAlt, isZoomed: () => s.zoom };
+  return { debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, refreshCosmetic, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned, primaryDown, primaryUp, secondaryDown, secondaryUp, reload: startReload, drop, inspect, canReload, hasAlt, isZoomed: () => s.zoom };
 }

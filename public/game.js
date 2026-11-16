@@ -354,6 +354,7 @@ const mainMenu = createMainMenu({
   onPlay: () => { if (joined) startPlay(); else teamMenu.open(); },
   onQuit: quitGame, // a tab the user opened can't always close itself: wipe and leave immediately
   onSettings: applySettings,
+  onCosmetic: (key) => weapons?.refreshCosmetic(key),
 });
 let touch = null;
 const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen() || chat?.isOpen());

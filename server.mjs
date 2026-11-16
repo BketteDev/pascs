@@ -10,7 +10,7 @@ import { createGame } from './server/game.mjs';
 
 const pub = path.join(import.meta.dirname, 'public');
 const vendor = path.join(import.meta.dirname, 'node_modules', 'three', 'build');
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.mp3': 'audio/mpeg' };
+const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.mp3': 'audio/mpeg' };
 
 // A different path for each release also versions every relative module import.
 const clientFiles = new Set(fs.readdirSync(pub, { withFileTypes: true })
