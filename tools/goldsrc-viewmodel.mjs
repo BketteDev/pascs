@@ -55,7 +55,7 @@ export function loadGoldSrc(file) {
   const activities = [
     [/^idle/i, 'ACT_VM_IDLE'], [/^draw/i, 'ACT_VM_DRAW'], [/^reload/i, 'ACT_VM_RELOAD'],
     [/^(shoot|fire)/i, 'ACT_VM_PRIMARYATTACK'], [/^slash/i, 'ACT_VM_HITCENTER'],
-    [/^(stab|heavy)/i, 'ACT_VM_SECONDARYATTACK'], [/^inspect/i, 'ACT_VM_INSPECT'],
+    [/^(stab|heavy)/i, 'ACT_VM_SECONDARYATTACK'], [/^inspect(?!_unsil)/i, 'ACT_VM_INSPECT'],
   ];
   const anims = [], sequences = [];
   for (let j = 0; j < i(164); j++) {

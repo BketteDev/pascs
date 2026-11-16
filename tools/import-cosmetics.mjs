@@ -167,7 +167,7 @@ function bake(item) {
     }
     return boneMap.get('hand_r');
   }) : [];
-  const data = [], meta = { bones: sk.bones.length + mapped.length, rightHanded: true, meshes: [], sequences: [] };
+  const data = [], meta = { bones: sk.bones.length + mapped.length, rightHanded: !item.goldSrc || item.weapon === 'knife', meshes: [], sequences: [] };
   if (separateHands) meta.armBoneOffset = sk.bones.length;
   let offset = 0;
   const push = (values, Type = Float32Array) => {

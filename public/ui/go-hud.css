@@ -25,7 +25,6 @@
 #wsel { color: var(--go-hud); }
 #wsel .w { border-radius: 2px; background: var(--go-panel); }
 #wsel .w.cur { background: #263545bc; border-color: #b6cad7a8; }
-#wsel .w-fire { color: var(--hud); }
 #wsel img { filter: none; }
 #feed .notice { border-radius: 2px; background: var(--go-panel); }
 
