@@ -396,9 +396,9 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
 
   // ---------- bot combat ----------
   // Vision (16 Hz): enemies in a 130 degree view cone, or whoever just shot them, with a clear line to the head or chest; smoke and flashes
-  // blind them. On first sight a human-like reaction delay and an aim error that settles over ~0.35 s; then they turn at a limited speed,
+  // blind them. On first sight they react and settle their aim before firing, then turn at a limited speed,
   // stop to shoot (moving ruins accuracy, as in CS), tap/burst at range, spray up close with half-controlled recoil, and reload.
-  // Shots are real: the same spread / range / armor / penetration rules as players, against simplified hitboxes (head sphere, body cylinders).
+  // Shots use the player ballistics with additional spread for bots, against simplified hitboxes (head sphere, body cylinders).
   const tri = () => Math.random() - 0.5 + (Math.random() - 0.5);
   const angTo = (a, b) => ((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
   const eyeOf = (e) => e.p.eye, headOf = (e) => [e.p.o[0], e.p.o[1], e.p.o[2] + (e.p.ducked ? 46 : 63)], chestOf = (e) => [e.p.o[0], e.p.o[1], e.p.o[2] + (e.p.ducked ? 30 : 44)];
@@ -462,7 +462,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     if (w.recoil.type === 'kickback') { const pt = w.recoil.pts[Math.min(ai.shots - 1, w.recoil.pts.length - 1)]; pu = [pt[0] * 0.5, pt[1] * 0.5]; }
     else if (w.recoil.type === 'punch') pu = [Math.min(ai.shots * w.recoil.pitch * 0.3, 4), 0];
     bot_ducked = p.ducked;
-    const spread = botSpread(w, ai.shots, Math.hypot(p.v[0], p.v[1]) > 140, !p.onGround);
+    const spread = botSpread(w, ai.shots, Math.hypot(p.v[0], p.v[1]) > 140, !p.onGround) + 0.035;
     const yaw = p.yaw + (pu[1] * Math.PI) / 180, pitch = p.pitch + (pu[0] * Math.PI) / 180, cp = Math.cos(pitch), eye = p.eye;
     const fwd = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)], right = [Math.sin(yaw), -Math.cos(yaw), 0], up = [-Math.sin(pitch) * Math.cos(yaw), -Math.sin(pitch) * Math.sin(yaw), Math.cos(pitch)];
     let to = null, hitAny = false;
@@ -488,7 +488,9 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       const seen = spot(bot, now);
       if (seen && seen !== ai.enemy) { // new target: react, with an aim error that settles
         const surprised = ai.threat === seen; // we were shot by them: no time to settle, and less precise
-        ai.react = now + (surprised ? 0.12 : 0.2) + Math.random() * 0.2; ai.err = [(Math.random() - 0.5) * (surprised ? 0.3 : 0.22), (Math.random() - 0.5) * 0.09]; ai.head = Math.random() < 0.3; ai.shots = 0;
+        ai.react = now + (surprised ? 0.4 : 0.5) + Math.random() * 0.25;
+        ai.err = [(Math.random() - 0.5) * (surprised ? 0.3 : 0.22), (Math.random() - 0.5) * 0.09];
+        ai.head = Math.random() < 0.1; ai.shots = 0;
       }
       if (seen) { ai.enemy = seen; ai.lastSeen = now; }
       else if (now - (ai.lastSeen ?? -9) > 0.6) ai.enemy = 0; // lost them for a moment: keep aiming where they were
@@ -499,13 +501,13 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const gun = [...bot.owned].filter((k) => WEAPONS[k].slot <= 2 && (ai.ammo[k]?.mag ?? 1) + (ai.ammo[k]?.reserve ?? 1) > 0).sort((x, y) => WEAPONS[x].slot - WEAPONS[y].slot)[0];
     if (gun && bot.weapon !== gun) { setWeapon(bot, gun); ai.nextShot = now + 0.4; ai.reloadUntil = 0; }
     const eye = p.eye, aim = ai.head ? headOf(e) : chestOf(e), d = [aim[0] - eye[0], aim[1] - eye[1], aim[2] - eye[2]], dist = Math.hypot(...d);
-    if (botsFight && round.phase === 'live' && now >= (ai.nextNadeAt ?? 0) && dist > 380 && dist < 950 && bot.health > 35) {
+    if (botsFight && round.phase === 'live' && now >= Math.max(ai.react, ai.nextNadeAt ?? 0) && dist > 380 && dist < 950 && bot.health > 35) {
       const nade = ['molotov', 'incgrenade', 'hegrenade'].find((k) => bot.gr[k] > 0);
       if (nade && (!inActiveFire(e.p.o) || nade === 'hegrenade')) botThrowAt(bot, nade, e.p.o, now);
     }
-    const settle = Math.exp(-(now - (ai.react - 0.25)) / 0.35); // aim error shrinks after first sight
+    const settle = Math.exp(-(now - (ai.react - 0.25)) / 0.55); // aim error shrinks after first sight
     const wantYaw = Math.atan2(d[1], d[0]) + ai.err[0] * Math.min(settle, 1), wantPitch = Math.atan2(d[2], Math.hypot(d[0], d[1])) + ai.err[1] * Math.min(settle, 1);
-    const dy = angTo(p.yaw, wantYaw), dp = wantPitch - p.pitch, turn = (Math.abs(dy) > 1 ? 16 : 9) * TICK; // rad per tick: a fast flick when far off target
+    const dy = angTo(p.yaw, wantYaw), dp = wantPitch - p.pitch, turn = (Math.abs(dy) > 1 ? 10 : 6) * TICK; // rad per tick
     p.yaw += Math.sign(dy) * Math.min(Math.abs(dy), turn); p.pitch += Math.sign(dp) * Math.min(Math.abs(dp), turn);
     if (ai.shots && now > ai.nextShot + 0.3) ai.shots = 0; // the spray resets after a pause
     const onTarget = Math.abs(angTo(p.yaw, wantYaw)) < 0.05 && Math.abs(wantPitch - p.pitch) < 0.05;

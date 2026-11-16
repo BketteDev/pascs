@@ -178,6 +178,25 @@ try {
     botT.p.o = [fireOrigin[0] + 220, fireOrigin[1], fireOrigin[2] + 1]; botT.gr = { smokegrenade: 1 }; botT.owned.add('smokegrenade'); botT.ai.nextNadeAt = 0; botT.alive = true;
     advance(3.2);
     assert(cBot.last.smokes.length > 0 && cBot.last.fires.length === 0, 'bot throws smoke to extinguish nearby fire');
+
+    Object.assign(botGame.round, { phase: 'live', left: 30 });
+    Object.assign(actorBot, { alive: true, health: 100 });
+    Object.assign(botCt, { alive: true, health: 100, weapon: 'usp', owned: new Set(['usp']), gr: {} });
+    Object.assign(botCt.ai, { enemy: 0, threat: 0, blindUntil: 0, nextShot: 0, reloadUntil: 0, ammo: {} });
+    Object.assign(botCt.p, { o: [-350, -450, 1], v: [0, 0, 0], yaw: 0, pitch: 0 });
+    Object.assign(actorBot.p, { o: [350, -450, 1], v: [0, 0, 0] });
+    botT.alive = false;
+    cBot.events.length = 0;
+    const botFired = () => cBot.events.some((e) => e.e === 'shot' && e.id === botCt.id);
+    const originalRandom = Math.random;
+    try {
+      Math.random = () => 0.5;
+      advance(0.45);
+      assert.equal(botCt.ai.enemy, actorBot.id, 'bot sees the exposed player');
+      assert(!botFired(), 'bot waits before firing at a newly visible player');
+      advance(0.5);
+      assert(botFired(), 'bot returns fire after its reaction delay');
+    } finally { Math.random = originalRandom; }
   } finally {
     botGame.stop();
   }

@@ -187,14 +187,14 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
   bob.health = 100; bob.armor = 0;
   shoot(a, bob, 1, { fire: false }); await sleep(120);
   assert.strictEqual(hp(), 100, 'a hit without a shot is ignored');
-  shoot(a, bob, 2, { at: [bob.p.o[0] + 120, bob.p.o[1] + 120, bob.p.o[2]] }); await sleep(250);
+  const alice = game.ents.get(a.id), side = [-(bob.p.o[1] - alice.p.o[1]), bob.p.o[0] - alice.p.o[0]], sl = Math.hypot(...side);
+  shoot(a, bob, 2, { at: [bob.p.o[0] + (side[0] / sl) * 70, bob.p.o[1] + (side[1] / sl) * 70, bob.p.o[2]] }); await sleep(250);
   assert.strictEqual(hp(), 100, 'a ray that passes beside the target is ignored');
   shoot(a, bob, 1, { at: [bob.p.o[0], bob.p.o[1], bob.p.o[2] - 17] }); await sleep(250); // aimed at the chest, claimed as a head
   assert(hp() < 100 && hp() > 100 - 54 * 1.5, 'a false headshot claim counts as the chest: -' + (100 - hp()).toFixed(1));
   bob.health = 100;
   const tick0 = game.tick(), old = [...bob.p.o];
   await sleep(150); // a few snapshots with Bob here
-  const alice = game.ents.get(a.id), side = [-(bob.p.o[1] - alice.p.o[1]), bob.p.o[0] - alice.p.o[0]], sl = Math.hypot(...side);
   bob.p.o = [old[0] + (side[0] / sl) * 70, old[1] + (side[1] / sl) * 70, old[2]]; // he steps aside after Alice saw him (and fired)
   await sleep(50);
   shoot(a, bob, 2, { at: old }); await sleep(120);

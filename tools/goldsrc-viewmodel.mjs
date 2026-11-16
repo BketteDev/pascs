@@ -43,8 +43,9 @@ export function loadGoldSrc(file) {
           const v = [0, 2, 4, 6].map((offset) => b.readInt16LE(cmd + offset)); cmd += 8; return v;
         });
         for (let j = 2; j < corners.length; j++) {
-          const tri = count < 0 ? [0, j - 1, j] : j % 2 ? [j - 1, j - 2, j] : [j - 2, j - 1, j];
-          for (const index of tri) emit(corners[index]);
+          // GoldSrc keeps clockwise faces. Reverse both fans and strips for three.js.
+          const [a, b] = count < 0 ? [0, j - 1] : j % 2 ? [j - 1, j - 2] : [j - 2, j - 1];
+          for (const index of [a, j, b]) emit(corners[index]);
         }
       }
       if (mesh.pos.length) meshes.push(mesh);

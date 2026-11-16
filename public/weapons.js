@@ -69,18 +69,25 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); white.needsUpdate = true;
   const catalog = await loadCosmetics();
   const getLook = (key) => catalog[key]?.find((item) => item.id === equippedCosmetic(key));
-  const buildVm = (key, look) => {
+  const getGlove = (look) => look?.gloves ? catalog.gloves?.find((item) => item.id === equippedCosmetic('gloves')) : undefined;
+  const assetKey = (key, look, glove) => [key, look?.id, glove?.id].filter(Boolean).join('/');
+  const loadBytes = async (url, compressed) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Unable to load view model: ' + url);
+    return compressed ? new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer() : response.arrayBuffer();
+  };
+  const loadModel = (base) => Promise.all([loadBytes(base + '.bin.gz', true), fetch(base + '.json').then((r) => r.json())]);
+  const buildVm = (key, look, glove) => {
     const fire = WEAPONS[key].grenade === 'fire', source = fire ? 'smokegrenade' : key;
-    const cacheKey = look ? key + '/' + look.id : key;
+    const cacheKey = assetKey(key, look, glove);
     if (!loading.has(cacheKey)) loading.set(cacheKey, (async () => {
       const modelBase = look?.model ? 'cosmetics/' + look.model : null;
-      const [bin, info] = await Promise.all([
-        fetch(modelBase ? modelBase + '.bin.gz' : `weapons/${source}.bin`).then((r) => {
-          if (!r.ok) throw new Error('Unable to load view model: ' + cacheKey);
-          return modelBase ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer() : r.arrayBuffer();
-        }),
-        modelBase ? fetch(modelBase + '.json').then((r) => r.json()) : manifest[source],
-      ]);
+      const [bin, info] = modelBase ? await loadModel(modelBase) : [await loadBytes(`weapons/${source}.bin`), manifest[source]];
+      const armOffset = info.armBoneOffset;
+      const replacement = glove && armOffset !== undefined
+        ? await loadModel('cosmetics/' + glove.model).catch((error) => console.warn(error))
+        : null;
+      const canSwapArms = replacement && replacement[1].bones === info.bones - armOffset;
       if (fire) await loadIncendiaryModels(loadTex);
       const group = new THREE.Group(); group.visible = false;
       group.matrixAutoUpdate = false; group.matrix.copy((info.rightHanded ?? WEAPONS[source].rightHanded) ? MODEL_TO_CAMERA_RH : MODEL_TO_CAMERA);
@@ -88,9 +95,11 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       const bones = Array.from({ length: info.bones }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; });
       const skeleton = new THREE.Skeleton(bones);
       let incendiary, ignition;
-      for (const m of info.meshes) {
+      const meshes = info.meshes.filter((mesh) => !canSwapArms || !mesh.arm).map((mesh) => [mesh, bin, 0]);
+      if (canSwapArms) for (const mesh of replacement[1].meshes) meshes.push([mesh, replacement[0], armOffset]);
+      for (const [m, buffer, boneOffset] of meshes) {
         const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bin, m.pos, m.count * 3), 3));
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(buffer, m.pos, m.count * 3), 3));
         if (fire && m === info.meshes[0]) {
           // The smoke grenade's item mesh is skinned entirely to bone 0; keep its animated hands.
           const model = createIncendiaryModel(key);
@@ -119,14 +128,15 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
           }
           continue;
         }
-        geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(bin, m.nrm, m.count * 3), 3));
-        geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(bin, m.uv, m.count * 2), 2));
-        geo.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array(bin, m.bw, m.count * 4), 4));
-        geo.setAttribute('skinIndex', new THREE.BufferAttribute(new Float32Array(bin, m.bi, m.count * 4), 4));
-        if (m.indexCount) geo.setIndex(new THREE.BufferAttribute(new Uint32Array(bin, m.idx, m.indexCount), 1));
+        geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(buffer, m.nrm, m.count * 3), 3));
+        geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(buffer, m.uv, m.count * 2), 2));
+        geo.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array(buffer, m.bw, m.count * 4), 4));
+        const indices = new Float32Array(buffer, m.bi, m.count * 4);
+        geo.setAttribute('skinIndex', new THREE.BufferAttribute(boneOffset ? indices.map((index) => index + boneOffset) : indices, 4));
+        if (m.indexCount) geo.setIndex(new THREE.BufferAttribute(new Uint32Array(buffer, m.idx, m.indexCount), 1));
         const mat = new THREE.ShaderMaterial({ uniforms: { map: { value: white }, cutoff: { value: m.alpha === 1 ? 0.5 : 0 } }, vertexShader: vmVertex, fragmentShader: vmFragment, transparent: m.alpha === 2 });
-        const file = look?.textures?.[m.material] ?? m.tex;
-        if (file) loadTex(modelBase || look?.textures?.[m.material] ? 'cosmetics/' + file : 'weapons/tex/' + file, (t) => { mat.uniforms.map.value = t; });
+        const paint = !boneOffset && look?.textures?.[m.material], file = paint || m.tex;
+        if (file) loadTex(modelBase || paint ? 'cosmetics/' + file : 'weapons/tex/' + file, (t) => { mat.uniforms.map.value = t; });
         const mesh = new THREE.SkinnedMesh(geo, mat);
         mesh.bindMode = THREE.DetachedBindMode; mesh.bind(skeleton, new THREE.Matrix4());
         mesh.frustumCulled = false;
@@ -145,15 +155,16 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     return loading.get(cacheKey);
   };
   async function loadVm(key) {
-    const look = getLook(key);
-    const vm = await buildVm(key, look).catch((error) => {
+    const look = getLook(key), glove = getGlove(look);
+    const vm = await buildVm(key, look, glove).catch((error) => {
       if (!look) throw error;
       console.warn(error);
       return buildVm(key);
     });
     const old = vms[key];
-    if (look !== getLook(key)) {
-      if (vm !== old && vm.cacheKey !== key) releaseVm(vm);
+    const currentLook = getLook(key);
+    if (look !== currentLook || glove !== getGlove(currentLook)) {
+      if (vm !== old && vm.cacheKey !== key && vm.cacheKey !== assetKey(key, currentLook)) releaseVm(vm);
       return loadVm(key);
     }
     if (old && vm !== old) { vm.group.visible = old.group.visible; releaseVm(old); }
@@ -174,6 +185,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   }
 
   function refreshCosmetic(key) {
+    if (key === 'gloves') return Promise.all(Object.keys(vms).filter((weapon) => getLook(weapon)?.gloves).map(refreshCosmetic));
     if (!vms[key]) return;
     return loadVm(key).then(() => { if (s.cur === key) playAct(key, 'ACT_VM_IDLE'); });
   }

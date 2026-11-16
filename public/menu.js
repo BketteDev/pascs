@@ -44,12 +44,13 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
   };
   const closeWin = () => { win.hidden = true; win.innerHTML = ''; win.onclick = null; };
   async function inventoryWindow() {
-    frame('Inventory', '<div class="inventory-page"><div class="inventory-filter"><select aria-label="Weapon"></select><input type="search" placeholder="Search skins" aria-label="Search skins"></div><div class="inventory-grid"></div></div>', [['Close', 'cancel']]);
+    frame('Inventory', '<div class="inventory-page"><div class="inventory-filter"><select aria-label="Item type"></select><input type="search" placeholder="Search skins" aria-label="Search skins"></div><small class="inventory-hint" hidden>Gloves apply to compatible CS:GO weapon and knife skins.</small><div class="inventory-grid"></div></div>', [['Close', 'cancel']]);
     const page = win.querySelector('.inventory-page');
     const weapon = page.querySelector('select'), search = page.querySelector('input'), grid = page.querySelector('.inventory-grid');
     win.onclick = (e) => { if (e.target.dataset.b === 'cancel') closeWin(); };
     const catalog = await loadCosmetics();
     if (!page.isConnected) return;
+    if (catalog.gloves?.length) weapon.add(new Option('Gloves', 'gloves'));
     for (const key of Object.keys(catalog).filter((k) => WEAPONS[k]).sort((a, b) => WEAPONS[a].name.localeCompare(WEAPONS[b].name))) {
       weapon.add(new Option(WEAPONS[key].name, key));
     }
@@ -58,17 +59,25 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
     const render = () => {
       grid.replaceChildren();
       const key = weapon.value, selected = equippedCosmetic(key);
-      const items = [{ id: 'default', name: 'Default' }, ...catalog[key]];
+      const gloves = key === 'gloves';
+      page.querySelector('.inventory-hint').hidden = !gloves;
+      const items = [{ id: 'default', name: gloves ? 'Weapon’s gloves' : 'Default' }, ...catalog[key]];
       for (const item of items.filter((x) => x.name.toLowerCase().includes(search.value.trim().toLowerCase()))) {
         const card = document.createElement('button');
         card.type = 'button'; card.className = 'inventory-card';
         card.setAttribute('aria-pressed', item.id === selected ? 'true' : 'false');
-        const icon = document.createElement(item.preview ? 'img' : 'span');
-        if (item.preview) {
-          icon.alt = ''; icon.loading = 'lazy'; icon.src = 'cosmetics/' + item.preview;
-        } else {
-          icon.className = 'inventory-icon'; icon.setAttribute('aria-hidden', 'true');
-          icon.textContent = GLYPH[WEAPONS[key].icon ?? 'knife'];
+        const fallbackIcon = () => {
+          const fallback = document.createElement('span');
+          fallback.className = 'inventory-icon'; fallback.setAttribute('aria-hidden', 'true');
+          if (!gloves) fallback.textContent = GLYPH[WEAPONS[key].icon ?? 'knife'];
+          return fallback;
+        };
+        const icon = gloves && item.id === 'default' ? fallbackIcon() : new Image();
+        if (icon instanceof HTMLImageElement) {
+          icon.alt = ''; icon.loading = 'lazy'; icon.decoding = 'async'; icon.draggable = false;
+          icon.onerror = () => icon.replaceWith(fallbackIcon());
+          const preview = item.id === 'default' ? 'default-' + key : item.id;
+          icon.src = 'cosmetics/previews/' + preview + '.webp';
         }
         const name = document.createElement('span'), status = document.createElement('small');
         name.className = 'inventory-name';

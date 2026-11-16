@@ -1,4 +1,4 @@
-// Bake the Source viewmodels from the supplied packs. Run after unpacking them under exports/asset-import.
+// Bake viewmodels from exports/asset-import, then run tools/render-cosmetic-previews.mjs for the inventory.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -30,6 +30,14 @@ const guns = {
   tmp: ['smg_mp9'], ump45: ['smg_ump45'], usp: ['pist_usp', 'pist_usp_silencer'], xm1014: ['shot_xm1014'],
 };
 const weaponLabels = { rif_m4a4: 'M4A4 · CS:GO pack', pist_usp: 'USP · CS:GO pack', pist_usp_silencer: 'USP-S · CS:GO pack' };
+const gloveStyles = [
+  ['glove-hardknuckle', 'Hard Knuckle', 'glove_hardknuckle/v_glove_hardknuckle'],
+  ['glove-hardknuckle-black', 'Hard Knuckle · Black', 'glove_hardknuckle/v_glove_hardknuckle_black'],
+  ['glove-sport', 'Sport Gloves', 'glove_sporty/v_glove_sporty'],
+  ['glove-driver', 'Driver Gloves', 'glove_slick/v_glove_slick'],
+  ['glove-handwraps', 'Leather Hand Wraps', 'glove_handwrap_leathery/v_glove_handwrap_leathery'],
+  ['glove-fullfinger', 'Full-Finger Gloves', 'glove_fullfinger/v_glove_fullfinger'],
+];
 const models = [
   ...Object.entries(knifeNames).map(([name, label]) => ({ weapon: 'knife', id: name, label, materials: materialRoot, base: path.join(modelRoot, 'v_knife_' + name) })),
   ...Object.entries(guns).flatMap(([weapon, files]) => files.map((name) => ({ weapon, id: name, label: weaponLabels[name] ?? 'CS:GO pack', materials: materialRoot, base: path.join(modelRoot, 'v_' + name) }))),
@@ -37,8 +45,9 @@ const models = [
   { weapon: 'knife', id: 'valorant', label: 'VALORANT Knife', materials: pack('valorant-knife', 'Valorant Knife/materials'), base: pack('valorant-knife', 'Valorant Knife/models/weapons/v_knife_t') },
   ...['ak47', 'awp', 'deagle', 'knife', 'm4a1', 'p228', 'tmp', 'usp'].map((weapon) => ({
     weapon, id: 'printstream-' + weapon, label: weapon === 'knife' ? 'Karambit · Printstream' : 'Printstream',
-    goldSrc: true, base: pack('printstream', 'Printstream Pack/512x512/v_' + weapon),
+    goldSrc: true, base: pack('printstream', 'Printstream Pack/1024x1024/v_' + weapon),
   })),
+  ...gloveStyles.map(([id, label, base]) => ({ weapon: 'gloves', id, label, materials: materialRoot, base: path.join(modelRoot, 'v_models/arms', base) })),
 ];
 
 // The pack renames some models but keeps their original material directories.
@@ -94,15 +103,18 @@ function saveTexture(file, pixels) {
   if (saved.has(file)) return saved.get(file);
   const source = pixels ? png(pixels.W, pixels.H, 4, pixels.rgba) : fs.readFileSync(file);
   const id = createHash('sha1').update(source).digest('hex').slice(0, 18), dest = 'tex/' + id + '.png';
-  if (!fs.existsSync(path.join(out, dest))) {
-    const { W, H, rgba } = pixels ?? vtfToRgba(source);
-    const stride = Math.max(1, Math.ceil(Math.max(W, H) / 512));
-    const width = Math.ceil(W / stride), height = Math.ceil(H / stride), data = Buffer.alloc(width * height * 4);
-    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+  const target = path.join(out, dest), old = fs.existsSync(target) ? fs.readFileSync(target) : null;
+  const W = pixels?.W ?? source.readUInt16LE(16), H = pixels?.H ?? source.readUInt16LE(18);
+  const stride = Math.max(1, Math.ceil(Math.max(W, H) / 1024));
+  const width = Math.ceil(W / stride), height = Math.ceil(H / stride);
+  if (!old || old.length < 24 || old.readUInt32BE(16) !== width || old.readUInt32BE(20) !== height) {
+    const { rgba } = pixels ?? vtfToRgba(source);
+    const data = stride === 1 ? rgba : Buffer.alloc(width * height * 4);
+    if (stride > 1) for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
       const src = (y * stride * W + x * stride) * 4, dst = (y * width + x) * 4;
       rgba.copy(data, dst, src, src + 4);
     }
-    fs.writeFileSync(path.join(out, dest), png(width, height, 4, data));
+    fs.writeFileSync(target, png(width, height, 4, data));
   }
   saved.set(file, dest);
   return dest;
@@ -117,6 +129,7 @@ function materialFor(mesh, root) {
   const kukri = root === materialRoot && name === 'knife_kukri' && path.join(archiveMaterials, 'Knife_ct/knife_ct.rar/kukri_c.vtf');
   const file = candidates.map((p) => files.get(p)).find(Boolean) || (aliasPath && files.get(aliasPath));
   const text = file?.toLowerCase().endsWith('.vmt') ? fs.readFileSync(file, 'latin1') : '';
+  if (/^\s*"?WeaponDecal\b/i.test(text) && /^\s*"?\$no_draw"?\s+"?1\b/im.test(text)) return null;
   const base = text.match(/\$basetexture"?\s+"?([^"\s]+)/i)?.[1]?.replaceAll('\\', '/').toLowerCase();
   const texture = (kukri && fs.existsSync(kukri) && kukri)
     || (base && files.get(base + '.vtf'))
@@ -135,10 +148,16 @@ const knifeActivity = {
 };
 const isInspection = (q) => q.activity === 'ACT_VM_INSPECT' || /^(lookat\d+|inspect(?:_?\d+)?)$/i.test(q.name);
 function bake(item) {
+  const glove = item.weapon === 'gloves';
   const gold = item.goldSrc ? loadGoldSrc(item.base + '.mdl') : null;
   const model = gold ?? loadModel(item.base), sk = gold ?? loadSkeleton(item.base + '.mdl');
+  if (glove && (sk.bones.length !== armBones.length || sk.bones.some((bone, i) =>
+    bone.name !== armBones[i].name || bone.poseToBone.some((value, j) => Math.abs(value - armBones[i].poseToBone[j]) > 0.001)))) {
+    throw new Error('Gloves do not match the arm skeleton');
+  }
   const boneMap = new Map(gold ? [] : sk.bones.map((b, i) => [b.name.toLowerCase(), i]));
-  const separateHands = boneMap.has('hand_r') && !model.meshes.some((m) => /hand|glove|sleeve|arms/i.test(m.material));
+  const spareMagazine = item.id === 'rgx-vandal' ? boneMap.get('magazine2') : -1;
+  const separateHands = !glove && boneMap.has('hand_r') && !model.meshes.some((m) => /hand|glove|sleeve|arms/i.test(m.material));
   const mapped = separateHands ? armBones.map((arm) => {
     let bone = arm;
     while (bone) {
@@ -149,6 +168,7 @@ function bake(item) {
     return boneMap.get('hand_r');
   }) : [];
   const data = [], meta = { bones: sk.bones.length + mapped.length, rightHanded: true, meshes: [], sequences: [] };
+  if (separateHands) meta.armBoneOffset = sk.bones.length;
   let offset = 0;
   const push = (values, Type = Float32Array) => {
     const prev = offset, buf = Buffer.from(Type.from(values).buffer);
@@ -159,6 +179,7 @@ function bake(item) {
   const goldTextures = new Map();
   for (const [number, mesh] of [...model.meshes, ...(separateHands ? arms : [])].entries()) {
     const isArm = number >= model.meshes.length;
+    const bare = (glove || isArm) && mesh.material === 'bare_arm_133';
     let mat;
     try {
       if (gold) {
@@ -169,12 +190,15 @@ function bake(item) {
           });
         }
         mat = goldTextures.get(mesh.texture);
+      } else if (bare) {
+        mat = materialFor({ ...mesh, cd: [viewMaterials + '/arms/bare/'] }, materialRoot);
       } else mat = materialFor(mesh, isArm ? materialRoot : item.materials);
     }
     catch (error) {
-      if (!number || gold || isArm) throw error;
+      if (!number || gold || isArm || glove) throw error;
       continue; // optional stickers and charms may use unsupported Source shaders
     }
+    if (!mat) continue;
     const packed = { pos: [], nrm: [], uv: [], bi: [], bw: [] }, seen = new Map(), indices = [];
     const lengths = { pos: 3, nrm: 3, uv: 2, bi: 4, bw: 4 };
     for (let i = 0; i < mesh.pos.length / 3; i++) {
@@ -189,12 +213,14 @@ function bake(item) {
       indices.push(v);
     }
     const m = { material: mesh.material, tex: mat.tex, alpha: mat.alpha, count: seen.size, indexCount: indices.length };
+    if (isArm) m.arm = true;
+    if (glove && bare && !mesh.pos.some((value, i) => i % 3 === 2 && value < 43)) m.forearm = true;
     for (const [attr, values] of Object.entries(packed)) m[attr] = push(values);
     m.idx = push(indices, Uint32Array);
     meta.meshes.push(m);
   }
   const keys = new Set();
-  const sequences = sk.sequences.filter((q) => {
+  const sequences = (glove ? sk.sequences.filter((q) => q.name === 'idle').map((q) => ({ ...q, activity: 'ACT_VM_IDLE' })) : sk.sequences).filter((q) => {
     const anim = sk.anims[q.anim];
     if (!anim || !anim.frames || !anim.fps || anim.delta) return false;
     if (isInspection(q)) return true;
@@ -207,21 +233,27 @@ function bake(item) {
     const anim = sk.anims[q.anim], skip = anim.frames > 16 ? 2 : 1, frames = Math.ceil(anim.frames / skip), skin = [], attach = [];
     for (let frame = 0; frame < anim.frames; frame += skip) {
       const world = sk.boneToWorld(anim, frame);
+      if (spareMagazine >= 0 && q.activity !== 'ACT_VM_RELOAD') {
+        // Collapse the reload prop inside the seated magazine so it cannot float into view.
+        const magazine = world[boneMap.get('magazine')];
+        world[spareMagazine] = [0, 0, 0, magazine[3], 0, 0, 0, magazine[7], 0, 0, 0, magazine[11]];
+      }
       world.forEach((m, i) => skin.push(...mul34(m, sk.bones[i].poseToBone)));
       mapped.forEach((bone, i) => skin.push(...mul34(world[bone], armBones[i].poseToBone)));
       const at = sk.attachments[0];
-      if (at && item.weapon !== 'knife') { const m = mul34(world[at.bone], at.local); attach.push(m[3], m[7], m[11]); }
+      if (at && !glove && item.weapon !== 'knife') { const m = mul34(world[at.bone], at.local); attach.push(m[3], m[7], m[11]); }
     }
     if (!skin.every(Number.isFinite)) throw new Error('Non-finite animation in ' + q.name);
     meta.sequences.push({ name: q.name, activity: q.activity, loop: anim.loop, fps: anim.fps / skip, frames, skin: push(skin), attach: attach.length ? push(attach) : -1 });
   }
-  if (!meta.meshes.length) throw new Error('Missing viewmodel meshes');
+  if (!meta.meshes.some((mesh) => !mesh.arm)) throw new Error('Missing viewmodel meshes');
   if (!meta.sequences.some((seq) => seq.activity === 'ACT_VM_IDLE')) throw new Error('Missing idle animation');
   const dest = 'models/' + item.id;
   fs.writeFileSync(path.join(out, dest + '.json'), JSON.stringify(meta));
   fs.writeFileSync(path.join(out, dest + '.bin.gz'), gzipSync(Buffer.concat(data), { level: 9 }));
-  const first = gold ? meta.meshes.at(-1) : meta.meshes[0];
+  const first = glove ? meta.meshes.find((m) => m.material.startsWith('glove_')) : gold ? meta.meshes.at(-1) : meta.meshes[0];
   const entry = { id: item.id, name: item.label, model: dest, preview: first.tex };
+  if (separateHands) entry.gloves = true;
   const variants = [];
   for (const [id, finish, source] of paints[item.id] ?? []) {
     const file = [path.join(materialRoot, viewMaterials, source), path.join(archiveMaterials, source)].find((p) => fs.existsSync(p));

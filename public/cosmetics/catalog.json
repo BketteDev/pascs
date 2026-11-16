@@ -4,13 +4,15 @@
       "id": "bayonet",
       "name": "Bayonet",
       "model": "models/bayonet",
-      "preview": "tex/358f1d33b1c5c8e944.png"
+      "preview": "tex/358f1d33b1c5c8e944.png",
+      "gloves": true
     },
     {
       "id": "bayonet-emerald",
       "name": "Bayonet · Doppler Emerald",
       "model": "models/bayonet",
       "preview": "tex/c5deb8b217684c2636.png",
+      "gloves": true,
       "textures": {
         "knife_bayonet": "tex/c5deb8b217684c2636.png"
       }
@@ -34,13 +36,15 @@
       "id": "butterfly",
       "name": "Butterfly Knife",
       "model": "models/butterfly",
-      "preview": "tex/a9866ba0e8a3c14622.png"
+      "preview": "tex/a9866ba0e8a3c14622.png",
+      "gloves": true
     },
     {
       "id": "butterfly-emerald",
       "name": "Butterfly Knife · Doppler Emerald",
       "model": "models/butterfly",
       "preview": "tex/91c51c6656cbfbb9a5.png",
+      "gloves": true,
       "textures": {
         "knife_butterfly": "tex/91c51c6656cbfbb9a5.png"
       }
@@ -50,6 +54,7 @@
       "name": "Butterfly Knife · Love",
       "model": "models/butterfly",
       "preview": "tex/23d5a22440dd397536.png",
+      "gloves": true,
       "textures": {
         "knife_butterfly": "tex/23d5a22440dd397536.png"
       }
@@ -58,31 +63,36 @@
       "id": "classic",
       "name": "Classic Knife",
       "model": "models/classic",
-      "preview": "tex/1a15b5715979386862.png"
+      "preview": "tex/1a15b5715979386862.png",
+      "gloves": true
     },
     {
       "id": "ct",
       "name": "CS:GO Knife · CT",
       "model": "models/ct",
-      "preview": "tex/923dd06bd0f03ea73d.png"
+      "preview": "tex/923dd06bd0f03ea73d.png",
+      "gloves": true
     },
     {
       "id": "t",
       "name": "CS:GO Knife · T",
       "model": "models/t",
-      "preview": "tex/42e8c29524815fa921.png"
+      "preview": "tex/42e8c29524815fa921.png",
+      "gloves": true
     },
     {
       "id": "falchion",
       "name": "Falchion Knife",
       "model": "models/falchion",
-      "preview": "tex/b4672d8a894b3b8c4b.png"
+      "preview": "tex/b4672d8a894b3b8c4b.png",
+      "gloves": true
     },
     {
       "id": "falchion-ruby",
       "name": "Falchion Knife · Doppler Ruby",
       "model": "models/falchion",
       "preview": "tex/30b43e6ad76eecf481.png",
+      "gloves": true,
       "textures": {
         "knife_falchion": "tex/30b43e6ad76eecf481.png"
       }
@@ -91,97 +101,112 @@
       "id": "flip",
       "name": "Flip Knife",
       "model": "models/flip",
-      "preview": "tex/00a699076753f83cea.png"
+      "preview": "tex/00a699076753f83cea.png",
+      "gloves": true
     },
     {
       "id": "gut",
       "name": "Gut Knife",
       "model": "models/gut",
-      "preview": "tex/bf65d77f293b9def9b.png"
+      "preview": "tex/bf65d77f293b9def9b.png",
+      "gloves": true
     },
     {
       "id": "huntsman",
       "name": "Huntsman Knife",
       "model": "models/huntsman",
-      "preview": "tex/ed243aa04fbfef56ae.png"
+      "preview": "tex/ed243aa04fbfef56ae.png",
+      "gloves": true
     },
     {
       "id": "karambit",
       "name": "Karambit",
       "model": "models/karambit",
-      "preview": "tex/cf2f79cdaa07753671.png"
+      "preview": "tex/cf2f79cdaa07753671.png",
+      "gloves": true
     },
     {
       "id": "printstream-knife",
       "name": "Karambit · Printstream",
       "model": "models/printstream-knife",
-      "preview": "tex/07f6c168e609c3eb00.png"
+      "preview": "tex/7231da1d5148a11118.png"
     },
     {
       "id": "kukri",
       "name": "Kukri Knife",
       "model": "models/kukri",
-      "preview": "tex/934fd01294b8fe4f3d.png"
+      "preview": "tex/934fd01294b8fe4f3d.png",
+      "gloves": true
     },
     {
       "id": "m9_bayonet",
       "name": "M9 Bayonet",
       "model": "models/m9_bayonet",
-      "preview": "tex/226227590c73627aa9.png"
+      "preview": "tex/226227590c73627aa9.png",
+      "gloves": true
     },
     {
       "id": "navaja",
       "name": "Navaja Knife",
       "model": "models/navaja",
-      "preview": "tex/01409e2a6635a8dd6d.png"
+      "preview": "tex/01409e2a6635a8dd6d.png",
+      "gloves": true
     },
     {
       "id": "nomad",
       "name": "Nomad Knife",
       "model": "models/nomad",
-      "preview": "tex/f31191381e0d393f4a.png"
+      "preview": "tex/f31191381e0d393f4a.png",
+      "gloves": true
     },
     {
       "id": "paracord",
       "name": "Paracord Knife",
       "model": "models/paracord",
-      "preview": "tex/e09040b46aaf3e3dd3.png"
+      "preview": "tex/e09040b46aaf3e3dd3.png",
+      "gloves": true
     },
     {
       "id": "shadow_daggers",
       "name": "Shadow Daggers",
       "model": "models/shadow_daggers",
-      "preview": "tex/89ae5224d362d4e81c.png"
+      "preview": "tex/89ae5224d362d4e81c.png",
+      "gloves": true
     },
     {
       "id": "skeleton",
       "name": "Skeleton Knife",
       "model": "models/skeleton",
-      "preview": "tex/1d5f45f07f62d37f5b.png"
+      "preview": "tex/1d5f45f07f62d37f5b.png",
+      "gloves": true
     },
     {
       "id": "stiletto",
       "name": "Stiletto Knife",
       "model": "models/stiletto",
-      "preview": "tex/3ea3c217d7f9194ace.png"
+      "preview": "tex/3ea3c217d7f9194ace.png",
+      "gloves": true
     },
     {
       "id": "survival",
       "name": "Survival Knife",
       "model": "models/survival",
-      "preview": "tex/37ac3e714021fc1764.png"
+      "preview": "tex/37ac3e714021fc1764.png",
+      "gloves": true
     },
     {
       "id": "talon",
       "name": "Talon Knife",
       "model": "models/talon",
-      "preview": "tex/be6345d6e43ad504a0.png"
+      "preview": "tex/be6345d6e43ad504a0.png",
+      "gloves": true
     },
     {
       "id": "ursus",
       "name": "Ursus Knife",
       "model": "models/ursus",
-      "preview": "tex/57dbbe2f4c09852b8d.png"
+      "preview": "tex/57dbbe2f4c09852b8d.png",
+      "gloves": true
     },
     {
       "id": "valorant",
@@ -195,13 +220,14 @@
       "id": "rif_ak47",
       "name": "CS:GO pack",
       "model": "models/rif_ak47",
-      "preview": "tex/7e3357b8449b3f09d0.png"
+      "preview": "tex/7e3357b8449b3f09d0.png",
+      "gloves": true
     },
     {
       "id": "printstream-ak47",
       "name": "Printstream",
       "model": "models/printstream-ak47",
-      "preview": "tex/461a45732f5c372273.png"
+      "preview": "tex/9ec4801c5fc2fe9a96.png"
     },
     {
       "id": "rgx-vandal",
@@ -215,7 +241,8 @@
       "id": "rif_aug",
       "name": "CS:GO pack",
       "model": "models/rif_aug",
-      "preview": "tex/1c9c2fe923034f3d6e.png"
+      "preview": "tex/1c9c2fe923034f3d6e.png",
+      "gloves": true
     }
   ],
   "awp": [
@@ -223,7 +250,8 @@
       "id": "snip_awp",
       "name": "CS:GO pack",
       "model": "models/snip_awp",
-      "preview": "tex/32c98fadd4fcefea32.png"
+      "preview": "tex/32c98fadd4fcefea32.png",
+      "gloves": true
     },
     {
       "id": "printstream-awp",
@@ -238,6 +266,7 @@
       "name": "Crimson Web",
       "model": "models/pist_deagle",
       "preview": "tex/bb1fa3699ab50c5a6f.png",
+      "gloves": true,
       "textures": {
         "deagle": "tex/bb1fa3699ab50c5a6f.png"
       }
@@ -246,13 +275,14 @@
       "id": "pist_deagle",
       "name": "CS:GO pack",
       "model": "models/pist_deagle",
-      "preview": "tex/3697fd0cf1a339fe6b.png"
+      "preview": "tex/3697fd0cf1a339fe6b.png",
+      "gloves": true
     },
     {
       "id": "printstream-deagle",
       "name": "Printstream",
       "model": "models/printstream-deagle",
-      "preview": "tex/a69df8b14b753a965a.png"
+      "preview": "tex/bb68ff5e67eb1b0b9b.png"
     }
   ],
   "elite": [
@@ -260,7 +290,8 @@
       "id": "pist_elite",
       "name": "CS:GO pack",
       "model": "models/pist_elite",
-      "preview": "tex/3b261bef95933e4558.png"
+      "preview": "tex/3b261bef95933e4558.png",
+      "gloves": true
     }
   ],
   "famas": [
@@ -268,7 +299,8 @@
       "id": "rif_famas",
       "name": "CS:GO pack",
       "model": "models/rif_famas",
-      "preview": "tex/2bf091a07dea7fa145.png"
+      "preview": "tex/2bf091a07dea7fa145.png",
+      "gloves": true
     }
   ],
   "fiveseven": [
@@ -276,7 +308,8 @@
       "id": "pist_fiveseven",
       "name": "CS:GO pack",
       "model": "models/pist_fiveseven",
-      "preview": "tex/5d093ec51f7a7e3723.png"
+      "preview": "tex/5d093ec51f7a7e3723.png",
+      "gloves": true
     }
   ],
   "g3sg1": [
@@ -284,7 +317,8 @@
       "id": "snip_g3sg1",
       "name": "CS:GO pack",
       "model": "models/snip_g3sg1",
-      "preview": "tex/00d3f4b27492844bc8.png"
+      "preview": "tex/00d3f4b27492844bc8.png",
+      "gloves": true
     }
   ],
   "galil": [
@@ -292,7 +326,8 @@
       "id": "rif_galilar",
       "name": "CS:GO pack",
       "model": "models/rif_galilar",
-      "preview": "tex/23e62c43f53ea39947.png"
+      "preview": "tex/23e62c43f53ea39947.png",
+      "gloves": true
     }
   ],
   "glock": [
@@ -300,7 +335,8 @@
       "id": "pist_glock18",
       "name": "CS:GO pack",
       "model": "models/pist_glock18",
-      "preview": "tex/b4d49214d68887f3dc.png"
+      "preview": "tex/b4d49214d68887f3dc.png",
+      "gloves": true
     }
   ],
   "m249": [
@@ -308,7 +344,8 @@
       "id": "mach_m249",
       "name": "CS:GO pack",
       "model": "models/mach_m249",
-      "preview": "tex/703f5dafd9a06c12de.png"
+      "preview": "tex/703f5dafd9a06c12de.png",
+      "gloves": true
     }
   ],
   "m3": [
@@ -316,7 +353,8 @@
       "id": "shot_m3super90",
       "name": "CS:GO pack",
       "model": "models/shot_m3super90",
-      "preview": "tex/28b44b45f4a39b5a2e.png"
+      "preview": "tex/28b44b45f4a39b5a2e.png",
+      "gloves": true
     }
   ],
   "mac10": [
@@ -324,7 +362,8 @@
       "id": "smg_mac10",
       "name": "CS:GO pack",
       "model": "models/smg_mac10",
-      "preview": "tex/988285d57efa201fdb.png"
+      "preview": "tex/988285d57efa201fdb.png",
+      "gloves": true
     }
   ],
   "m4a1": [
@@ -332,19 +371,21 @@
       "id": "rif_m4a1_silencer",
       "name": "CS:GO pack",
       "model": "models/rif_m4a1_silencer",
-      "preview": "tex/778831e887091dc3f0.png"
+      "preview": "tex/778831e887091dc3f0.png",
+      "gloves": true
     },
     {
       "id": "rif_m4a4",
       "name": "M4A4 · CS:GO pack",
       "model": "models/rif_m4a4",
-      "preview": "tex/292400d3279f4c9a85.png"
+      "preview": "tex/292400d3279f4c9a85.png",
+      "gloves": true
     },
     {
       "id": "printstream-m4a1",
       "name": "Printstream",
       "model": "models/printstream-m4a1",
-      "preview": "tex/f3f1fcd4272b1c65d4.png"
+      "preview": "tex/21ecd478b498dd19e2.png"
     }
   ],
   "mp5": [
@@ -352,7 +393,8 @@
       "id": "smg_mp5sd",
       "name": "CS:GO pack",
       "model": "models/smg_mp5sd",
-      "preview": "tex/b23c1a831aacd6da24.png"
+      "preview": "tex/b23c1a831aacd6da24.png",
+      "gloves": true
     }
   ],
   "p228": [
@@ -360,13 +402,14 @@
       "id": "pist_p250",
       "name": "CS:GO pack",
       "model": "models/pist_p250",
-      "preview": "tex/c26c6a91001c5a5ba1.png"
+      "preview": "tex/c26c6a91001c5a5ba1.png",
+      "gloves": true
     },
     {
       "id": "printstream-p228",
       "name": "Printstream",
       "model": "models/printstream-p228",
-      "preview": "tex/78ffc2be0b08756c46.png"
+      "preview": "tex/866d51499122e1925f.png"
     }
   ],
   "p90": [
@@ -374,7 +417,8 @@
       "id": "smg_p90",
       "name": "CS:GO pack",
       "model": "models/smg_p90",
-      "preview": "tex/3c24c1765236e0a9ea.png"
+      "preview": "tex/3c24c1765236e0a9ea.png",
+      "gloves": true
     }
   ],
   "scout": [
@@ -382,7 +426,8 @@
       "id": "snip_ssg08",
       "name": "CS:GO pack",
       "model": "models/snip_ssg08",
-      "preview": "tex/b5889160fa36b1a762.png"
+      "preview": "tex/b5889160fa36b1a762.png",
+      "gloves": true
     }
   ],
   "sg550": [
@@ -390,7 +435,8 @@
       "id": "snip_scar20",
       "name": "CS:GO pack",
       "model": "models/snip_scar20",
-      "preview": "tex/ac1308cf0f2472d3a0.png"
+      "preview": "tex/ac1308cf0f2472d3a0.png",
+      "gloves": true
     }
   ],
   "sg552": [
@@ -398,7 +444,8 @@
       "id": "rif_sg553",
       "name": "CS:GO pack",
       "model": "models/rif_sg553",
-      "preview": "tex/c1eeb8d356c8623964.png"
+      "preview": "tex/c1eeb8d356c8623964.png",
+      "gloves": true
     }
   ],
   "tmp": [
@@ -406,13 +453,14 @@
       "id": "smg_mp9",
       "name": "CS:GO pack",
       "model": "models/smg_mp9",
-      "preview": "tex/6c43ce4c746038fd2e.png"
+      "preview": "tex/6c43ce4c746038fd2e.png",
+      "gloves": true
     },
     {
       "id": "printstream-tmp",
       "name": "Printstream",
       "model": "models/printstream-tmp",
-      "preview": "tex/c9ff0487f356094ca0.png"
+      "preview": "tex/69fc96e2ff5144cb7d.png"
     }
   ],
   "ump45": [
@@ -420,7 +468,8 @@
       "id": "smg_ump45",
       "name": "CS:GO pack",
       "model": "models/smg_ump45",
-      "preview": "tex/06ff152bffa022d4f6.png"
+      "preview": "tex/06ff152bffa022d4f6.png",
+      "gloves": true
     }
   ],
   "usp": [
@@ -428,7 +477,7 @@
       "id": "printstream-usp",
       "name": "Printstream",
       "model": "models/printstream-usp",
-      "preview": "tex/486d832a913078c085.png"
+      "preview": "tex/422e38fcb7c15f40b4.png"
     },
     {
       "id": "pist_usp",
@@ -448,7 +497,46 @@
       "id": "shot_xm1014",
       "name": "CS:GO pack",
       "model": "models/shot_xm1014",
-      "preview": "tex/e73944f64af95b9816.png"
+      "preview": "tex/e73944f64af95b9816.png",
+      "gloves": true
+    }
+  ],
+  "gloves": [
+    {
+      "id": "glove-driver",
+      "name": "Driver Gloves",
+      "model": "models/glove-driver",
+      "preview": "tex/c41d5d3575fc002280.png"
+    },
+    {
+      "id": "glove-fullfinger",
+      "name": "Full-Finger Gloves",
+      "model": "models/glove-fullfinger",
+      "preview": "tex/c306614775fcc087bb.png"
+    },
+    {
+      "id": "glove-hardknuckle",
+      "name": "Hard Knuckle",
+      "model": "models/glove-hardknuckle",
+      "preview": "tex/cc30f2bfcbf6849719.png"
+    },
+    {
+      "id": "glove-hardknuckle-black",
+      "name": "Hard Knuckle · Black",
+      "model": "models/glove-hardknuckle-black",
+      "preview": "tex/db246b6914174255f4.png"
+    },
+    {
+      "id": "glove-handwraps",
+      "name": "Leather Hand Wraps",
+      "model": "models/glove-handwraps",
+      "preview": "tex/9eb1ad20de1335891a.png"
+    },
+    {
+      "id": "glove-sport",
+      "name": "Sport Gloves",
+      "model": "models/glove-sport",
+      "preview": "tex/d33c2614251523cdd9.png"
     }
   ]
 }
