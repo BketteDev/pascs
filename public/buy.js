@@ -17,7 +17,7 @@ function icon(it, x, y) {
   if (!font) return `<image href="ui/icons/${it.icon}.png" x="${x - 52}" y="${y - 24}" width="104" height="52" preserveAspectRatio="xMidYMid meet"/>`;
   return `<text x="${x}" y="${(y + glyphMid(font, ch) * ICON_PX).toFixed(1)}" class="gl" style="font-family: ${font}; font-size: ${ICON_PX}px">${ch}</text>`;
 }
-export function createBuyMenu({ net, getState }) {
+export function createBuyMenu({ net, getState, canOpen = () => !!document.pointerLockElement }) {
   const el = document.getElementById('buymenu');
   let level = null, hover = -1, cx = 0, cy = 0; // level: null closed, -1 categories, n = BUY[n]
   const mine = (it) => !it.team || it.team === getState().team; // the other team's weapons are not shown at all
@@ -53,11 +53,13 @@ export function createBuyMenu({ net, getState }) {
     svg += `<circle cx="${C}" cy="${C}" r="${R0 - 6}" class="core"/><image href="ui/badge_${st.team}.png" x="${C - 42}" y="${C - 56}" width="84" height="84"/>` +
       list.slice(0, 9).map((_, i) => { const [x, y] = polar(R0 - 22, i * step + step / 2 - 0.0); return `<text x="${x}" y="${y + 4}" class="key">${i + 1}</text>`; }).join('') +
       `<text x="${C}" y="${C + 50}" class="money">$${st.money}</text>` +
-      `<circle cx="${C + cx}" cy="${C + cy}" r="5" class="dot"/>`;
+      (document.pointerLockElement
+        ? `<circle cx="${C + cx}" cy="${C + cy}" r="5" class="dot"/>`
+        : `<text x="${C}" y="${C + 68}" class="key">${level === -1 ? 'CLOSE' : 'BACK'}</text>`);
     el.innerHTML = `<svg viewBox="0 0 ${W} ${W}" width="${W}" height="${W}">${svg}</svg>`;
   }
-  const open = () => { level = -1; hover = -1; cx = cy = 0; el.style.display = 'block'; render(); };
-  const close = () => { level = null; el.style.display = 'none'; };
+  const open = () => { level = -1; hover = -1; cx = cy = 0; el.style.display = 'block'; el.classList.add('open'); render(); };
+  const close = () => { level = null; el.style.display = 'none'; el.classList.remove('open'); };
   const back = () => { if (level === -1) close(); else { level = -1; hover = -1; render(); } };
   function choose(i) {
     const it = entries()[i];
@@ -70,23 +72,60 @@ export function createBuyMenu({ net, getState }) {
     const a = (Math.atan2(cx, -cy) + Math.PI * 2) % (Math.PI * 2), step = (Math.PI * 2) / n;
     return Math.floor((a + step / 2) / step) % n;
   }
+  function wedgeAt(clientX, clientY) {
+    const svgEl = el.querySelector('svg');
+    if (!svgEl) return { idx: -1, outside: true };
+    const r = svgEl.getBoundingClientRect();
+    const scale = W / (r.width || W);
+    const x = (clientX - r.left) * scale - C, y = (clientY - r.top) * scale - C, d = Math.hypot(x, y);
+    if (d < R0) return { idx: -1, outside: false };
+    if (d > R1 + 24) return { idx: -1, outside: true };
+    const n = entries().length, a = (Math.atan2(x, -y) + Math.PI * 2) % (Math.PI * 2), step = (Math.PI * 2) / n;
+    return { idx: Math.floor((a + step / 2) / step) % n, outside: false };
+  }
   addEventListener('mousemove', (e) => {
-    if (level === null) return;
+    if (level === null || !document.pointerLockElement) return;
     e.stopPropagation();
     cx += e.movementX; cy += e.movementY;
     const d = Math.hypot(cx, cy); if (d > R1) { cx *= R1 / d; cy *= R1 / d; }
     const h = aim(); hover = h; render();
   }, { capture: true });
   addEventListener('mousedown', (e) => {
-    if (level === null) return;
+    if (level === null || !document.pointerLockElement) return;
     e.stopPropagation(); e.preventDefault();
     if (e.button === 2) { back(); return; } // right click: back a level (closes from the top)
     if (e.button !== 0) return;
     if (hover >= 0) choose(hover); else back();
   }, { capture: true });
+  let touchHandled = false;
+  el.addEventListener('touchstart', (e) => {
+    if (level === null || document.pointerLockElement) return;
+    const t = e.changedTouches[0]; if (!t) return;
+    const hit = wedgeAt(t.clientX, t.clientY);
+    if (hit.idx !== hover) { hover = hit.idx; render(); }
+  }, { passive: true });
+  el.addEventListener('touchend', (e) => {
+    if (level === null || document.pointerLockElement) return;
+    const t = e.changedTouches[0]; if (!t) return;
+    touchHandled = true;
+    e.preventDefault(); e.stopPropagation();
+    const hit = wedgeAt(t.clientX, t.clientY);
+    if (hit.outside) close();
+    else if (hit.idx >= 0) choose(hit.idx);
+    else back();
+  }, { passive: false });
+  el.addEventListener('click', (e) => {
+    if (level === null || document.pointerLockElement) return;
+    if (touchHandled) { touchHandled = false; return; }
+    e.stopPropagation();
+    const hit = wedgeAt(e.clientX, e.clientY);
+    if (hit.outside) close();
+    else if (hit.idx >= 0) choose(hit.idx);
+    else back();
+  });
   addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    if (is('buy', e.code)) { if (level !== null) close(); else if (document.pointerLockElement) open(); e.preventDefault(); return; } // opens only while playing (not from the main menu)
+    if (is('buy', e.code)) { if (level !== null) close(); else if (canOpen()) open(); e.preventDefault(); return; } // opens only while playing (not from the main menu)
     if (level === null) return;
     if (e.code === 'Escape') { close(); return; }
     const d = e.code.match(/^Digit(\d)$/)?.[1];

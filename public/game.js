@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Player, TICK, makeWorld, trace } from './physics.js';
 import { createWeapons } from './weapons.js';
 import { createPlayers } from './players.js';
-import { play, playAt, setListener, preload, setOcclusion, setVolumes } from './audio.js';
+import { audio, play, playAt, setListener, preload, setOcclusion, setVolumes } from './audio.js';
 import { WEAPONS } from './weapon-defs.js';
 import { createHud } from './hud.js';
 import { connectToServer } from './net.js';
@@ -16,6 +16,7 @@ import { createMainMenu, loadSettings } from './menu.js';
 import { binds, is } from './binds.js';
 import { createMovers } from './movers.js';
 import { createAmbience } from './ambience.js';
+import { createTouchControls } from './touch.js';
 
 const q = new URLSearchParams(location.search);
 const MAP_NAME = /^[a-z0-9_]+$/.test(window.__map ?? '') ? window.__map : 'de_dust2'; // the server's map (server.config.json): public/maps/<name>/; also picks the map's agents (agents.js)
@@ -38,7 +39,7 @@ const resize = () => {
   renderer.setSize(innerWidth, innerHeight);
   for (const c of [camera, skyCamera]) { c.aspect = innerWidth / innerHeight; c.updateProjectionMatrix(); }
 };
-addEventListener('resize', resize); resize();
+addEventListener('resize', resize); addEventListener('orientationchange', resize); visualViewport?.addEventListener('resize', resize); resize();
 
 // ---------- assets ----------
 const base = `maps/${MAP_NAME}/`;
@@ -352,8 +353,10 @@ const mainMenu = createMainMenu({
   onQuit: quitGame, // a tab the user opened can't always close itself: wipe and leave immediately
   onSettings: applySettings,
 });
+let touch = null;
 const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen());
-weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, initial: { owned: you.owned, weapon: you.weapon } });
+const canPlay = () => !uiOpen() && (!!document.pointerLockElement || !!(touch?.isEnabled() && joined));
+weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, canFire: canPlay, initial: { owned: you.owned, weapon: you.weapon } });
 devPanel = createDevPanel({ hud, weapons, range: window.__mode === 'range' });
 grenades = await createGrenades({ worldRoot, loadTex });
 bombs = await createBombs({ worldRoot, loadTex, playAt });
@@ -361,7 +364,7 @@ setLoad(65, 'Loading players...');
 players = await createPlayers({ loadTex, worldRoot, world: playerWorld, bulletLimit: world.collision.length, gain, play, fog: worldFog, light: world.light, skyBrush: new Set(world.skyBrushIdx ?? []), fogGlsl: FOG_GLSL, getMyTeam: () => you.team, getMyId: () => net.id, mapName: MAP_NAME });
 players.applySnapshot(net.first, performance.now() / 1000);
 player.others = players.solids;
-buyMenu = createBuyMenu({ net, getState: () => you });
+buyMenu = createBuyMenu({ net, getState: () => you, canOpen: canPlay });
 teamMenu = createTeamMenu({ net, getState: () => you, getRoster: () => roster, drawPortrait: players.drawPortrait, mapName: MAP_NAME, onPick: () => { joined = true; startPlay(); } });
 await new Promise((done) => { // wait for textures (capped so a missing file can't hang the screen)
   const t0 = performance.now();
@@ -400,19 +403,25 @@ addEventListener('keydown', (e) => {
   if (e.target.closest?.('input, textarea, select')) return; // typing in a menu field is not game input
   if (document.pointerLockElement) e.preventDefault(); // while playing, game keys must not trigger browser shortcuts (Ctrl+D bookmark, Ctrl+S, F5, Ctrl+plus zoom...)
   keys.add(e.code);
-  if (is('team', e.code) && !teamMenu.isOpen()) { document.exitPointerLock(); teamMenu.open(); }
-  if (is('use', e.code) && !e.repeat && !defuseHeld && you.alive && you.team === 'ct' && lastBomb?.s === 'planted' && document.pointerLockElement) { // hold E on the bomb to defuse
-    const b = lastBomb.o;
-    if (Math.hypot(b[0] - player.o[0], b[1] - player.o[1], (b[2] - player.o[2]) * 0.5) < 80) { defuseHeld = true; net.send({ t: 'defuse', on: true }); play('weapons/c4/c4_disarm', 0.7); }
-  }
-  else if (is('use', e.code) && !e.repeat && !defuseHeld && you.alive && document.pointerLockElement) net.send({ t: 'use' }); // hostages / dropped weapons
+  if (is('team', e.code) && !teamMenu.isOpen()) { document.exitPointerLock?.(); teamMenu.open(); }
+  if (is('use', e.code) && !e.repeat && document.pointerLockElement) startUse();
   if (!you.alive && is('jump', e.code) && !e.repeat && document.pointerLockElement && !uiOpen()) specFirstPerson = !specFirstPerson;
   if (e.code === 'Space' || is('jump', e.code)) e.preventDefault();
 }, { capture: true });
 // Scroll-wheel jump (+jump/-jump in one frame), the classic bhop bind. Must be a non-passive listener or the browser
 // ignores preventDefault, and Ctrl+scroll zooms the page.
 addEventListener('wheel', (e) => { if (document.pointerLockElement) e.preventDefault(); wheelJump = true; }, { passive: false });
-for (const ev of ['gesturestart', 'gesturechange', 'contextmenu', 'auxclick']) addEventListener(ev, (e) => { if (document.pointerLockElement) e.preventDefault(); }, { passive: false });
+for (const ev of ['gesturestart', 'gesturechange', 'contextmenu', 'auxclick']) addEventListener(ev, (e) => { if (document.pointerLockElement || touch?.isActive()) e.preventDefault(); }, { passive: false });
+function nearBomb() {
+  if (!you.alive || you.team !== 'ct' || lastBomb?.s !== 'planted') return false;
+  const b = lastBomb.o;
+  return Math.hypot(b[0] - player.o[0], b[1] - player.o[1], (b[2] - player.o[2]) * 0.5) < 80;
+}
+function startUse() {
+  if (defuseHeld || !you.alive) return;
+  if (nearBomb()) { defuseHeld = true; net.send({ t: 'defuse', on: true }); play('weapons/c4/c4_disarm', 0.7); }
+  else net.send({ t: 'use' }); // hostages / dropped weapons
+}
 function stopDefuse() { if (!defuseHeld) return; defuseHeld = false; net.send({ t: 'defuse', on: false }); }
 addEventListener('mousedown', (e) => {
   if (!document.pointerLockElement || you.alive || (!deadAt && you.team !== 'spec')) return;
@@ -427,19 +436,40 @@ addEventListener('blur', () => { keys.clear(); stopDefuse(); });
 const lockPointer = () => {
   const el = renderer.domElement;
   try {
-    const p = el.requestPointerLock({ unadjustedMovement: true });
-    if (p?.catch) p.catch(() => { try { el.requestPointerLock(); } catch { /* ignored */ } });
-  } catch { try { el.requestPointerLock(); } catch { /* ignored */ } }
+    const p = el.requestPointerLock?.({ unadjustedMovement: true });
+    if (p?.catch) p.catch(() => { try { el.requestPointerLock?.(); } catch { /* ignored */ } });
+  } catch { try { el.requestPointerLock?.(); } catch { /* ignored */ } }
 };
+const wakeAudio = () => { try { const c = audio(); if (c.state === 'suspended') c.resume(); } catch {} };
 // Pointer lock must be requested straight from the click (user gesture), so it comes first and never waits on anything.
 // Fullscreen + Keyboard Lock (Chromium) then also capture Ctrl+W / Ctrl+T / Ctrl+N; if refused, play continues windowed.
 const startPlay = () => {
-  lockPointer();
-  if (!q.has('windowed')) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(() => navigator.keyboard?.lock()).catch(() => {});
+  wakeAudio();
+  if (!touch?.isEnabled()) lockPointer();
+  if (!q.has('windowed')) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.then(() => navigator.keyboard?.lock?.())?.catch(() => {});
 };
+touch = createTouchControls({
+  player, weapons,
+  getSettings: () => settings,
+  getYou: () => you,
+  getRound: () => roundState,
+  uiOpen,
+  isJoined: () => joined,
+  nearBomb,
+  onUseStart: startUse,
+  onUseStop: stopDefuse,
+  onMenu: () => { if (!uiOpen()) mainMenu.open(); },
+  onTeam: () => { if (!teamMenu.isOpen()) teamMenu.open(); },
+  onBuy: () => { if (buyMenu.isOpen()) buyMenu.close(); else if (!uiOpen()) buyMenu.open(); },
+  onScoresToggle: (on) => scoreboard.show(on),
+  onSpecNext: () => { specIdx++; },
+  onSpecView: () => { specFirstPerson = !specFirstPerson; },
+  onWakeAudio: wakeAudio,
+  onEnterPlay: () => { if (!q.has('windowed') && !document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => {}); },
+});
 // no Esc screen: Esc just frees the mouse, and clicking the game takes it back (unless a menu is open)
-renderer.domElement.addEventListener('click', () => { if (!document.pointerLockElement && !uiOpen()) startPlay(); });
-document.addEventListener('pointerlockchange', () => { keys.clear(); if (!document.pointerLockElement && joined && !uiOpen()) mainMenu.open(); }); // windowed: the browser's Esc frees the mouse; show the menu
+renderer.domElement.addEventListener('click', () => { if (!document.pointerLockElement && !uiOpen() && !touch?.isEnabled()) startPlay(); });
+document.addEventListener('pointerlockchange', () => { keys.clear(); if (!document.pointerLockElement && joined && !uiOpen() && !touch?.isEnabled()) mainMenu.open(); }); // windowed: the browser's Esc frees the mouse; show the menu
 addEventListener('mousemove', (e) => {
   if (!document.pointerLockElement || uiOpen()) return;
   const k = ((0.022 * settings.sens * Math.PI) / 180) * (weapons.fov(FOV) / FOV); // m_yaw * sensitivity (Options > Mouse), scaled down while zoomed
@@ -466,12 +496,12 @@ function deathCam(t, dt) {
       weapons.setSpectate(b.weaponKey, dt, b.speed ?? 0);
       hud.setStats({ money: b.money ?? 800, hp: b.health ?? 100, armor: b.armor ? 100 : 0, helmet: !!b.helmet });
       hud.setAmmo(null, null); hud.setScope(false);
-      deathEl.textContent = `Spectating ${b.name} [1st Person]  (LMB: next | Space/RMB: 3rd person)`;
+      deathEl.textContent = touch?.isEnabled() ? `Spectating ${b.name} [1st Person]` : `Spectating ${b.name} [1st Person]  (LMB: next | Space/RMB: 3rd person)`;
       deathEl.style.display = 'block';
       return [[b.origin[0], b.origin[1], b.origin[2] + eyeZ], fwd, b.yaw, b.pitch ?? 0, true];
     }
     target = [b.origin[0], b.origin[1], b.origin[2] + 56];
-    text = `Spectating ${b.name} [3rd Person]  (LMB: next | Space/RMB: 1st person)`;
+    text = touch?.isEnabled() ? `Spectating ${b.name} [3rd Person]` : `Spectating ${b.name} [3rd Person]  (LMB: next | Space/RMB: 1st person)`;
   } else if (since < 3 && you.team !== 'spec') {
     const me = players.byId.get(net.id);
     target = me?.ragdoll ? [...me.ragdoll.P[0]] : [player.o[0], player.o[1], player.o[2] + 24];
@@ -491,10 +521,15 @@ renderer.compile(scene, camera);
 renderer.setAnimationLoop((now) => {
   const dt = Math.min((now - last) / 1000, 0.1); acc += dt; last = now;
   for (; acc >= TICK; acc -= TICK) {
+    const tm = touch?.isActive() ? touch.getMove() : null;
     const cmd = {
       t: 'cmd', seq: ++seq,
-      f: (keys.has(binds.forward) ? 1 : 0) - (keys.has(binds.back) ? 1 : 0), s: (keys.has(binds.right) ? 1 : 0) - (keys.has(binds.left) ? 1 : 0),
-      j: keys.has(binds.jump) || wheelJump ? 1 : 0, d: keys.has(binds.duck) ? 1 : 0, w: keys.has(binds.walk) ? 1 : 0, yaw: player.yaw, pitch: player.pitch,
+      f: tm?.f || (keys.has(binds.forward) ? 1 : 0) - (keys.has(binds.back) ? 1 : 0),
+      s: tm?.s || (keys.has(binds.right) ? 1 : 0) - (keys.has(binds.left) ? 1 : 0),
+      j: (tm?.j || keys.has(binds.jump) || wheelJump) ? 1 : 0,
+      d: (tm?.d || keys.has(binds.duck)) ? 1 : 0,
+      w: (tm?.w || keys.has(binds.walk)) ? 1 : 0,
+      yaw: player.yaw, pitch: player.pitch,
     };
     wheelJump = false;
     if (roundState.phase === 'freeze' || !you.alive || weapons.state.planting || defuseHeld || you.act) { cmd.f = cmd.s = cmd.j = 0; } // freeze time / dead / planting / defusing: no moving (the server enforces it too)
@@ -519,6 +554,7 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   ambience.update(now / 1000);
   players.update(now / 1000, player.eye);
   hud.update();
+  touch?.update();
   const punch = weapons.punch(), VIEW_KICK = 0.25, yaw = player.yaw + punch[1] * rad * VIEW_KICK, pitch = player.pitch + punch[0] * rad * VIEW_KICK; // the camera only shows a hint of the recoil; bullets still follow the full spray pattern
   const vfov = weapons.fov(FOV);
   for (const c of [camera, skyCamera]) if (c.fov !== vfov) { c.fov = vfov; c.updateProjectionMatrix(); }

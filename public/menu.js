@@ -3,7 +3,7 @@
 // Settings live in localStorage ('settings', plus 'crosshair', 'playerName', 'binds', 'adminPass') and are handed to onSettings.
 // With a valid admin password (Options > Multiplayer) an ADMIN item opens the server admin window (map, team size, max players).
 import { ACTIONS, DEFAULT_BINDS, binds, setBinds, keyName } from './binds.js';
-export const DEFAULTS = { sens: 2.5, invert: false, master: 1, ambience: 1, brightness: 1, showFps: false, renderScale: 1, texLow: false };
+export const DEFAULTS = { sens: 2.5, invert: false, master: 1, ambience: 1, brightness: 1, showFps: false, renderScale: 1, texLow: false, touchMode: 'auto', touchSens: 1.0, touchLeftFire: true };
 const XH_DEFAULT = { color: '#32fa32', alpha: 1, length: 6, thickness: 2, gap: 3, outline: 0, dot: false, dynamic: true };
 const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === 'object' ? { ...d, ...v } : { ...d }; } catch { return { ...d }; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked: this session only */ } };
@@ -59,16 +59,19 @@ export function createMainMenu({ onPlay, onQuit, onSettings, inGame }) {
   function optionsWindow() {
     const s = loadSettings(), draft = { ...s, name: loadName(), adminPass: loadAdminPass(), binds: { ...binds }, xh: loadCrosshair() };
     const pct = (v) => Math.round(v * 100) + '%', px = (v) => v + ' px';
-    const FMT = { sens: (v) => Number(v).toFixed(2), master: pct, ambience: pct, brightness: pct, renderScale: pct, 'xh.alpha': pct, 'xh.length': px, 'xh.thickness': px, 'xh.gap': px, 'xh.outline': px };
+    const FMT = { sens: (v) => Number(v).toFixed(2), touchSens: (v) => Number(v).toFixed(2), master: pct, ambience: pct, brightness: pct, renderScale: pct, 'xh.alpha': pct, 'xh.length': px, 'xh.thickness': px, 'xh.gap': px, 'xh.outline': px };
     const val = (k) => (k.startsWith('xh.') ? draft.xh[k.slice(3)] : draft[k]);
     const slider = (k, label, min, max, step) => `<label class="vg-row">${label}<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${val(k)}"><output>${FMT[k](val(k))}</output></label>`;
     const check = (k, label) => `<label class="vg-row vg-check"><input type="checkbox" data-k="${k}" ${val(k) ? 'checked' : ''}>${label}</label>`;
+    const select = (k, label, opts) => `<label class="vg-row">${label}<select data-k="${k}">${opts.map(([v, t]) => `<option value="${v}"${val(k) === v ? ' selected' : ''}>${t}</option>`).join('')}</select><span></span></label>`;
     const preview = () => { const x = draft.xh, o = x.outline ? `box-shadow: 0 0 0 ${x.outline}px #000;` : '', bar = (st) => `<i style="position:absolute;background:${x.color};${o}${st}"></i>`, L = x.length, T = x.thickness, G = x.gap;
       return `<div class="vg-preview" style="opacity:${x.alpha}">${bar(`left:${-T / 2}px;top:${-G - L}px;width:${T}px;height:${L}px`)}${bar(`left:${-T / 2}px;top:${G}px;width:${T}px;height:${L}px`)}${bar(`top:${-T / 2}px;left:${-G - L}px;height:${T}px;width:${L}px`)}${bar(`top:${-T / 2}px;left:${G}px;height:${T}px;width:${L}px`)}${x.dot ? bar(`left:${-T / 2}px;top:${-T / 2}px;width:${T}px;height:${T}px`) : ''}</div>`; };
     const TABS = {
       Keyboard: () => `<div class="vg-keys">${ACTIONS.map(([a, label]) => `<div class="vg-key"><span>${label}</span><button data-bind="${a}" class="${capture?.action === a ? 'wait' : ''}">${capture?.action === a ? 'Press a key...' : keyName(draft.binds[a])}</button></div>`).join('')}</div>` +
         '<div class="vg-row vg-note">Click an action, then press its new key (Esc cancels). Weapons: 1-6. <button data-b="keydefaults">Use defaults</button></div>',
       Mouse: () => slider('sens', 'Mouse sensitivity', 0.2, 10, 0.05) + check('invert', 'Reverse mouse'),
+      Touch: () => select('touchMode', 'Touch controls', [['auto', 'Auto (mobile)'], ['on', 'Always on'], ['off', 'Off']]) +
+        slider('touchSens', 'Touch look speed', 0.3, 3.0, 0.05) + check('touchLeftFire', 'Extra fire button on left side'),
       Crosshair: () => `<div class="vg-xh"><div>${`<label class="vg-row">Color<input type="color" data-k="xh.color" value="${draft.xh.color}"><span></span></label>`}${slider('xh.alpha', 'Opacity', 0.1, 1, 0.01)}${slider('xh.length', 'Length', 1, 20, 1)}${slider('xh.thickness', 'Thickness', 1, 6, 1)}${slider('xh.gap', 'Gap', 0, 15, 1)}${slider('xh.outline', 'Outline', 0, 2, 1)}` +
         `${check('xh.dot', 'Center dot')}${check('xh.dynamic', 'Dynamic (opens with movement and firing)')}</div><div class="vg-previewbox">${preview()}</div></div>`,
       Audio: () => slider('master', 'Game volume', 0, 1, 0.01) + slider('ambience', 'Ambient sound volume', 0, 1, 0.01),
@@ -80,11 +83,12 @@ export function createMainMenu({ onPlay, onQuit, onSettings, inGame }) {
     let tab = 'Keyboard';
     const draw = () => {
       frame('Options', `<div class="vg-tabs">${Object.keys(TABS).map((t) => `<span class="${t === tab ? 'on' : ''}" data-t="${t}">${t}</span>`).join('')}</div><div class="vg-page">${TABS[tab]()}</div>`, [['OK', 'ok'], ['Cancel', 'cancel'], ['Apply', 'apply']]);
-      win.querySelector('.vg-page').oninput = (e) => {
+      const page = win.querySelector('.vg-page');
+      page.oninput = page.onchange = (e) => {
         const k = e.target.dataset.k; if (!k) return;
         const v = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'range' ? Number(e.target.value) : e.target.value;
         if (k.startsWith('xh.')) draft.xh[k.slice(3)] = v; else draft[k] = v;
-        const out = e.target.parentElement.querySelector('output'); if (out) out.textContent = FMT[k](v);
+        const out = e.target.parentElement.querySelector('output'); if (out) out.textContent = FMT[k]?.(v) ?? '';
         const box = win.querySelector('.vg-previewbox'); if (box) box.innerHTML = preview();
       };
     };

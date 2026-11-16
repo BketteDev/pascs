@@ -57,7 +57,7 @@ const vmFragment = `
     gl_FragColor = vec4(t.rgb * l * 1.2, t.a);
   }`;
 
-export async function createWeapons({ loadTex, player, world, bulletLimit, surfOf, surfaces, worldRoot, hud, renderer, targets, net, uiOpen, initial, alive = () => true }) {
+export async function createWeapons({ loadTex, player, world, bulletLimit, surfOf, surfaces, worldRoot, hud, renderer, targets, net, uiOpen, initial, alive = () => true, canFire = () => !!document.pointerLockElement }) {
   // ---------- assets ----------
   const manifest = await fetch('weapons/weapons.json').then((r) => r.json());
   const ctx = { world, limit: bulletLimit, surfOf, surfaces };
@@ -483,7 +483,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     if (delay > 0) {
       if (!pin.queued) {
         pin.queued = true;
-        setTimeout(() => { if (s.pin === pin && alive() && document.pointerLockElement) finishThrow(); }, delay * 1000);
+        setTimeout(() => { if (s.pin === pin && alive() && canFire()) finishThrow(); }, delay * 1000);
       }
       return;
     }
@@ -499,21 +499,45 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   // ---------- input ----------
   // C4: hold the trigger inside a bombsite to plant (the server times it and roots you in place); G drops it
   function stopPlant() { if (!s.planting) return; s.planting = false; net.send({ t: 'plant', on: false }); if (vms[s.cur]) playAct(s.cur, 'ACT_VM_IDLE'); }
-  addEventListener('mousedown', (e) => {
-    if (!document.pointerLockElement || uiOpen() || !alive()) return; // dead / spectating: clicks pick who to watch, they don't shoot
+  function primaryDown() {
+    if (!canFire() || uiOpen() || !alive()) return;
     audio();
-    if (def().c4) { if (e.button === 0 && now() >= s.deployEnd && !s.planting) { s.planting = true; s.clickAt = now(); net.send({ t: 'plant', on: true }); playAct(s.cur, 'ACT_VM_PRIMARYATTACK'); } return; }
-    if (def().grenade) { if ((e.button === 0 || e.button === 2) && !s.pin && !s.throwing && now() >= s.deployEnd) startPin(e.button); return; }
-    if (e.button === 0) { s.held = true; trigger(now()); } // shoot on the click, not on the next frame
-    if (e.button === 2 && def().melee && now() >= s.nextFire && now() >= s.deployEnd) { fire(true); return; } // knife: right click stabs
-    if (e.button === 2 && def().burst && !s.reload) { // CS:S: right click switches the Glock / FAMAS to three-round bursts and back
+    if (def().c4) { if (now() >= s.deployEnd && !s.planting) { s.planting = true; s.clickAt = now(); net.send({ t: 'plant', on: true }); playAct(s.cur, 'ACT_VM_PRIMARYATTACK'); } return; }
+    if (def().grenade) { if (!s.pin && !s.throwing && now() >= s.deployEnd) startPin(0); return; }
+    s.held = true; trigger(now()); // shoot on the click, not on the next frame
+  }
+  function primaryUp() {
+    s.held = false; stopPlant();
+    if (s.pin && s.pin.button === 0) release();
+  }
+  function secondaryDown() {
+    if (!canFire() || uiOpen() || !alive()) return;
+    audio();
+    if (def().grenade) { if (!s.pin && !s.throwing && now() >= s.deployEnd) startPin(2); return; }
+    if (def().melee && now() >= s.nextFire && now() >= s.deployEnd) { fire(true); return; } // knife: right click stabs
+    if (def().burst && !s.reload) { // CS:S: right click switches the Glock / FAMAS to three-round bursts and back
       const on = (s.burst[s.cur] = !s.burst[s.cur]); hud.notice(on ? 'Switched to Burst-Fire mode' : def().auto ? 'Switched to automatic' : 'Switched to semi-automatic'); return;
     }
-    if (e.button === 2) { const d = def(); if (d.scope && !s.reload && now() >= s.deployEnd) { if (s.resumeZoom) { s.resumeZoom = 0; return; } setZoom(s.zoom === 0 ? 1 : s.zoom === 1 ? 2 : 0); play('zoom', 0.5); } } // right click during the bolt: stay unscoped
+    const d = def();
+    if (d.scope && !s.reload && now() >= s.deployEnd) { if (s.resumeZoom) { s.resumeZoom = 0; return; } setZoom(s.zoom === 0 ? 1 : s.zoom === 1 ? 2 : 0); play('zoom', 0.5); } // right click during the bolt: stay unscoped
+  }
+  function secondaryUp() {
+    if (s.pin && s.pin.button === 2) release();
+  }
+  function drop() {
+    if (!alive() || uiOpen()) return;
+    if (s.cur === 'c4' || def().slot === 1 || def().slot === 2) { stopPlant(); net.send({ t: 'drop' }); }
+  }
+  const canReload = () => { const d = def(), a = ammo[s.cur]; return !!(d.mag && !s.reload && a.mag < d.mag && a.reserve > 0); };
+  const hasAlt = () => { const d = def(); return d.scope ? 'scope' : d.melee ? 'stab' : d.burst ? 'burst' : d.grenade ? 'lob' : null; };
+  addEventListener('mousedown', (e) => {
+    if (!canFire() || uiOpen() || !alive()) return; // dead / spectating: clicks pick who to watch, they don't shoot
+    if (e.button === 0) primaryDown();
+    else if (e.button === 2) secondaryDown();
   });
   addEventListener('mouseup', (e) => {
-    if (e.button === 0) { s.held = false; stopPlant(); }
-    if (s.pin && e.button === s.pin.button) release();
+    if (e.button === 0) primaryUp();
+    else if (e.button === 2) secondaryUp();
   });
   document.addEventListener('pointerlockchange', () => { s.held = false; stopPlant(); if (s.pin) { s.pin = null; playAct(s.cur, 'ACT_VM_IDLE'); } });
   addEventListener('contextmenu', (e) => e.preventDefault());
@@ -526,7 +550,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     } else if (n) { const k = n <= 3 ? bySlot(n) : n === 5 ? 'c4' : n === 6 ? 'smokegrenade' : GRENADES.find((g) => owned.has(g) && WEAPONS[g].grenade === 'fire'); if (k && owned.has(k)) select(k); } // 6 = smoke, 7 = incendiary
     else if (is('lastweapon', e.code)) select(s.last);
     else if (is('reload', e.code)) startReload();
-    else if (is('drop', e.code) && (s.cur === 'c4' || def().slot === 1 || def().slot === 2)) { stopPlant(); net.send({ t: 'drop' }); }
+    else if (is('drop', e.code)) drop();
   });
 
   // The firing decision: called on the mouse click itself (no waiting for the next frame) and every frame. Several shots may be due in
@@ -643,5 +667,5 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     for (const k of owned) ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
     s.reload = null; s.pin = null; s.throwing = null; s.emptyClicked = false; hudUpdate();
   }
-  return { debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned };
+  return { debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned, primaryDown, primaryUp, secondaryDown, secondaryUp, reload: startReload, drop, canReload, hasAlt, isZoomed: () => s.zoom };
 }

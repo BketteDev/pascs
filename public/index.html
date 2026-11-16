@@ -1,9 +1,12 @@
 <!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>CS:S Web - de_dust2</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font: 14px monospace; color: #fff; }
-  canvas { display: block; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font: 14px monospace; color: #fff; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; touch-action: none; }
   /* ---- CS:S HUD: amber numbers on dark rounded panels ---- */
   /* CS:S draws its HUD numbers with Valve's "HalfLife2" font: drop halflife2.ttf (Counter-Strike Source/hl2/resource) into ui/fonts and it is used;
      until then a close stand-in. */
@@ -34,7 +37,7 @@
      quarters, and 1px black lines across the whole screen */
   #scope { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 0; overflow: hidden; /* under the HUD panels, which follow it in the page */
     background: linear-gradient(#000, #000) center / 1px 100% no-repeat, linear-gradient(#000, #000) center / 100% 1px no-repeat; }
-  #scope .box { position: absolute; left: 50%; top: 50%; width: 87.5vh; height: 87.5vh; transform: translate(-50%, -50%); box-shadow: 0 0 0 100vmax #000;
+  #scope .box { position: absolute; left: 50%; top: 50%; width: min(87.5vh, 87.5vw); height: min(87.5vh, 87.5vw); transform: translate(-50%, -50%); box-shadow: 0 0 0 100vmax #000;
     background: url(ui/scope_lens.png) 0 0 / 100% 100%; }
   #scope .arc { position: absolute; width: 50%; height: 50%; background: url(ui/scope_arc.png) 0 0 / 100% 100%; }
   #scope .br { left: 50%; top: 50%; } #scope .bl { left: 0; top: 50%; transform: scaleX(-1); } #scope .tr { left: 50%; top: 0; transform: scaleY(-1); } #scope .tl { left: 0; top: 0; transform: scale(-1, -1); }
@@ -63,6 +66,7 @@
   #wsel .w.cur { background: rgba(255,176,0,.22); border-color: rgba(255,176,0,.8); } #wsel .w span { opacity: .8; } #wsel img { height: 28px; filter: sepia(1) saturate(6) hue-rotate(-12deg); }
   #wsel .w-fire { width: 34px; height: 24px; background: currentColor; mask: var(--icon) center / contain no-repeat; }
   #buymenu { position: fixed; inset: 0; display: none; z-index: 3; pointer-events: none; text-align: center; }
+  #buymenu.open { pointer-events: auto; touch-action: none; }
   #buymenu > svg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 96vmin; max-height: 96vmin; font-family: Verdana, Tahoma, sans-serif; }
   #buymenu .disc { fill: rgba(24,26,30,.74); stroke: rgba(255,255,255,.35); stroke-width: 2; }
   #buymenu .wedge { fill: transparent; transition: fill .06s; } #buymenu .hot > .wedge { fill: rgba(255,255,255,.16); } #buymenu .off { opacity: .4; }
@@ -174,6 +178,91 @@
   #loading .bar { width: min(320px, calc(100% - 32px)); height: 4px; background: #ffffff22; }
   #loadfill { height: 100%; width: 0; background: #fff; transition: width .25s; }
   #info { position: fixed; left: 50%; transform: translateX(-50%); bottom: 64px; font-size: 11px; opacity: .7; text-shadow: 1px 1px #000; white-space: pre; display: none; }
+  /* ---- mobile / touch controls & responsive UI ---- */
+  #touch-ui { position: fixed; inset: 0; z-index: 5; pointer-events: none; display: none; font-family: 'Trebuchet MS', Arial, sans-serif; }
+  #touch-top { position: fixed; left: calc(104px + env(safe-area-inset-left, 0px)); top: calc(8px + env(safe-area-inset-top, 0px)); display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; z-index: 7; }
+  .t-pill { padding: 6px 10px; border-radius: 6px; background: rgba(12,14,18,.68); border: 1px solid rgba(255,255,255,.24); color: #eee; font: bold 12px 'Trebuchet MS', Arial, sans-serif; touch-action: manipulation; }
+  .t-pill.hot { border-color: #ffd27a; color: #ffd27a; background: rgba(48,36,10,.8); }
+  .t-pill.active { border-color: #7fd36a; color: #7fd36a; }
+  #touch-move-zone { position: fixed; left: 0; top: 145px; bottom: 0; width: 42%; pointer-events: auto; touch-action: none; }
+  #touch-look-zone { position: fixed; left: 42%; top: 0; right: 0; bottom: 0; pointer-events: auto; touch-action: none; }
+  body.dead #touch-look-zone { left: 0; }
+  #touch-joy { position: absolute; left: 82px; bottom: 26px; width: 112px; height: 112px; transform: translate(-50%, 0); border-radius: 50%; background: rgba(255,255,255,.07); border: 2px solid rgba(255,255,255,.22); pointer-events: none; opacity: .55; }
+  #touch-joy.active { bottom: auto; transform: translate(-50%, -50%); opacity: .95; border-color: rgba(255,176,0,.75); }
+  #touch-knob { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; background: rgba(255,255,255,.34); border: 2px solid rgba(255,255,255,.55); }
+  #touch-fire-l { position: fixed; left: calc(16px + env(safe-area-inset-left, 0px)); top: 170px; width: 58px; height: 58px; z-index: 6; font-size: 12px; }
+  #touch-actions { position: fixed; right: calc(10px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: 210px; height: 192px; pointer-events: none; z-index: 6; display: flex; }
+  .t-btn { border-radius: 50%; background: rgba(16,18,22,.62); border: 2px solid rgba(255,255,255,.28); color: #f2f2f2; font: bold 11px 'Trebuchet MS', Arial, sans-serif; display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none; padding: 0; text-shadow: 0 1px 2px #000; }
+  .t-btn.t-fire { background: rgba(190,45,30,.55); border-color: rgba(255,120,90,.68); }
+  .t-btn.active { background: rgba(255,176,0,.45); border-color: rgba(255,210,120,.95); transform: scale(.94); }
+  .t-btn.hot { background: rgba(40,150,60,.65); border-color: #7fd36a; }
+  .t-btn.dim { opacity: .4; }
+  #touch-fire-r { position: absolute; right: 8px; bottom: 18px; width: 78px; height: 78px; font-size: 14px; }
+  #touch-jump { position: absolute; right: 6px; bottom: 112px; width: 54px; height: 54px; }
+  #touch-duck { position: absolute; right: 100px; bottom: 12px; width: 54px; height: 54px; }
+  #touch-reload { position: absolute; right: 100px; bottom: 76px; width: 54px; height: 54px; }
+  #touch-alt { position: absolute; right: 68px; bottom: 138px; width: 58px; height: 42px; border-radius: 10px; }
+  #touch-use { position: absolute; right: 134px; bottom: 138px; width: 62px; height: 42px; border-radius: 10px; }
+  #touch-drop { position: absolute; right: 162px; bottom: 18px; width: 46px; height: 36px; border-radius: 8px; font-size: 10px; }
+  #touch-weapons { position: fixed; left: 50%; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; gap: 5px; pointer-events: auto; z-index: 6; max-width: calc(100vw - 260px); flex-wrap: wrap; justify-content: center; }
+  .t-wep { padding: 6px 9px; border-radius: 5px; background: rgba(12,14,18,.62); border: 1px solid rgba(255,255,255,.22); color: #ddd; font: bold 11px 'Trebuchet MS', Arial, sans-serif; touch-action: manipulation; }
+  .t-wep.cur { background: rgba(255,176,0,.3); border-color: rgba(255,176,0,.85); color: #ffd27a; }
+  #touch-spec { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: none; gap: 10px; pointer-events: auto; z-index: 6; }
+  body.touch-mode #radar { left: calc(8px + env(safe-area-inset-left, 0px)); top: calc(8px + env(safe-area-inset-top, 0px)); width: 88px; height: 88px; }
+  body.touch-mode #roundbar { top: calc(8px + env(safe-area-inset-top, 0px)); bottom: auto; }
+  body.touch-mode #roundbar .row { height: 34px; padding: 2px 12px; gap: 8px; }
+  body.touch-mode #roundtime { font-size: 26px; min-width: 60px; top: -2px; }
+  body.touch-mode #clockicon, body.touch-mode #clockbomb { font-size: 22px; }
+  body.touch-mode .panel { bottom: auto; height: 28px; padding: 2px 8px; gap: 5px; border-radius: 6px; }
+  body.touch-mode .panel .num { font-size: 22px; min-width: 30px; top: -2px; }
+  body.touch-mode .panel .glyph { font-size: 18px; }
+  body.touch-mode .panel img { height: 16px; }
+  body.touch-mode #reserve { font-size: 14px; }
+  body.touch-mode #healthbox { left: calc(8px + env(safe-area-inset-left, 0px)); top: calc(102px + env(safe-area-inset-top, 0px)); }
+  body.touch-mode #armorbox { left: calc(84px + env(safe-area-inset-left, 0px)); top: calc(102px + env(safe-area-inset-top, 0px)); }
+  body.touch-mode #ammobox { left: calc(104px + env(safe-area-inset-left, 0px)); right: auto; top: calc(44px + env(safe-area-inset-top, 0px)); }
+  body.touch-mode #money { left: calc(104px + env(safe-area-inset-left, 0px)); right: auto; top: calc(76px + env(safe-area-inset-top, 0px)); bottom: auto; font-size: 20px; }
+  body.touch-mode #c4icon { left: calc(8px + env(safe-area-inset-left, 0px)); top: calc(134px + env(safe-area-inset-top, 0px)); bottom: auto; font-size: 24px; padding: 2px 8px; }
+  body.touch-mode #wsel { display: none !important; }
+  body.touch-mode #feed { top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; font-size: 11px; }
+  body.touch-mode #feed .notice { height: 18px; padding: 1px 6px; }
+  body.touch-mode #deathmsg { bottom: 62px; font-size: 14px; }
+  body.touch-mode #actbar { bottom: 38%; width: min(280px, 76vw); }
+  body.touch-mode #banner { top: 20%; font-size: 22px; }
+  .vg-page, #devpanel { touch-action: pan-y; }
+  @media (max-width: 540px) {
+    body.touch-mode #roundbar { top: calc(44px + env(safe-area-inset-top, 0px)); left: auto; right: 8px; transform: none; }
+    body.touch-mode #feed { top: calc(84px + env(safe-area-inset-top, 0px)); }
+    body.touch-mode #touch-weapons { bottom: calc(198px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 24px); }
+    body.touch-mode #touch-joy { width: 96px; height: 96px; }
+    body.touch-mode #touch-move-zone { width: 46%; }
+    body.touch-mode #touch-look-zone { left: 46%; }
+  }
+  @media (max-width: 900px), (max-height: 580px) {
+    .mm-logo { top: 8%; }
+    .mm-logo b { font-size: clamp(32px, 8vw, 56px); }
+    .mm-logo span { font-size: clamp(16px, 4vw, 24px); letter-spacing: 5px; }
+    .mm-items { top: 34%; }
+    .mm-item { width: min(320px, 82vw); padding: 8px 14px; font-size: 17px; }
+    .mm-win { max-height: 92dvh; display: flex; flex-direction: column; }
+    .vg-tabs { flex-wrap: wrap; }
+    .vg-tabs span { padding: 5px 9px; font-size: 12px; }
+    .vg-page { max-height: 55dvh; }
+    .vg-row { grid-template-columns: 120px 1fr 44px; gap: 6px; }
+    .vg-keys { grid-template-columns: 1fr; }
+    .vg-xh { grid-template-columns: 1fr; }
+    .tm-col { width: min(44vw, 210px); }
+    .tm-head b { font-size: 16px; }
+    .tm-disc { width: 120px; height: 120px; margin: 8px 0 14px; }
+    .tm-disc canvas { left: -16px; top: -16px; width: 152px; height: 208px; }
+    .tm-side { display: none; }
+    .tm-note { position: static; margin-top: 6px; }
+    .tm-foot { position: static; margin-top: 10px; gap: 14px; }
+    .tm-btn { padding: 8px 12px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.25); border-radius: 6px; font-size: 12px; }
+    #scoreboard { font-size: 11px; max-height: 82dvh; overflow-y: auto; pointer-events: auto; touch-action: pan-y; }
+    #scoreboard .sb-cols { grid-template-columns: 1fr; gap: 10px; }
+    #scoreboard .sb-top b { font-size: 26px; }
+  }
 </style>
 <div id="loading">
   <span class="agent">-</span><!-- the agent glyph of the CS logo font (cslogo.ttf) -->

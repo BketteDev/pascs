@@ -38,7 +38,7 @@ export function createTeamMenu({ net, getState, getRoster, drawPortrait, mapName
     for (const t of TEAMS) drawPortrait(t.id, cols[t.id].querySelector('canvas'), performance.now() / 1000);
     raf = requestAnimationFrame(frame);
   }
-  const fit = () => { el.style.zoom = Math.min(1, innerHeight / 760, innerWidth / 1100); };
+  const fit = () => { el.style.zoom = (innerWidth <= 900 || innerHeight <= 580) ? 1 : Math.min(1, innerHeight / 760, innerWidth / 1100); };
   addEventListener('resize', fit);
   const open = () => { shown = true; el.style.display = 'flex'; fit(); roster(); cancelAnimationFrame(raf); frame(); };
   const close = () => { shown = false; el.style.display = 'none'; cancelAnimationFrame(raf); };
