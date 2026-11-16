@@ -263,6 +263,28 @@
     #scoreboard .sb-cols { grid-template-columns: 1fr; gap: 10px; }
     #scoreboard .sb-top b { font-size: 26px; }
   }
+  /* ---- team & global chat ---- */
+  #chat-log { position: fixed; left: 14px; bottom: 126px; width: min(440px, 46vw); max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; pointer-events: none; z-index: 6; font: bold 13px/1.3 Verdana, Tahoma, sans-serif; text-shadow: 1px 1px 0 #000, 0 0 4px #000; opacity: 0; transition: opacity .35s; }
+  #chat-log.vis { opacity: 1; }
+  #chat-log.open { pointer-events: auto; touch-action: pan-y; background: rgba(0,0,0,.42); padding: 6px 8px; border-radius: 6px; }
+  .ch-msg { word-break: break-word; }
+  .ch-tag { color: #ffd27a; }
+  .ch-dead { color: #b8bcc4; font-weight: normal; }
+  .ch-text { color: #f2f2f2; font-weight: normal; }
+  #chat-box { position: fixed; left: 14px; bottom: 82px; width: min(440px, 92vw); display: none; align-items: center; gap: 6px; z-index: 16; background: rgba(16,18,22,.88); border: 1px solid rgba(255,255,255,.28); border-radius: 6px; padding: 5px; box-sizing: border-box; font-family: Verdana, Tahoma, sans-serif; }
+  #chat-box .ch-scope { padding: 6px 9px; border-radius: 4px; border: 1px solid rgba(255,255,255,.25); background: #2c3542; color: #dce6f5; font: bold 11px Verdana, sans-serif; cursor: pointer; flex-shrink: 0; }
+  #chat-box .ch-scope.team { background: #5a4618; border-color: #ffd27a; color: #ffd27a; }
+  #chat-box .ch-in { flex: 1; min-width: 0; background: rgba(0,0,0,.55); color: #fff; border: 1px solid rgba(255,255,255,.22); border-radius: 4px; padding: 6px 8px; font: 14px Verdana, sans-serif; outline: none; -webkit-user-select: text; user-select: text; }
+  #chat-box .ch-send { padding: 6px 10px; border-radius: 4px; border: 0; background: #c8902a; color: #111; font: bold 12px Verdana, sans-serif; cursor: pointer; flex-shrink: 0; }
+  #chat-box .ch-close { padding: 6px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); color: #ddd; font: bold 12px Verdana, sans-serif; cursor: pointer; flex-shrink: 0; }
+  body.touch-mode #chat-log { left: 50%; transform: translateX(-50%); top: calc(48px + env(safe-area-inset-top, 0px)); bottom: auto; width: min(360px, 56vw); max-height: 112px; font-size: 12px; }
+  body.touch-mode #chat-box { left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top, 0px)); bottom: auto; width: min(460px, 94vw); }
+  body.touch-mode #chat-log.open { top: calc(58px + env(safe-area-inset-top, 0px)); }
+  @media (max-width: 540px) {
+    body.touch-mode #chat-log { top: calc(138px + env(safe-area-inset-top, 0px)); left: 8px; transform: none; width: calc(100vw - 16px); max-height: 96px; }
+    body.touch-mode #chat-log.open { top: calc(58px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); width: 94vw; }
+  }
+  body.inmenu :is(#chat-log, #chat-box) { display: none !important; }
 </style>
 <div id="loading">
   <span class="agent">-</span><!-- the agent glyph of the CS logo font (cslogo.ttf) -->

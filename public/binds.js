@@ -4,7 +4,7 @@ export const ACTIONS = [
   ['forward', 'Move forward', 'KeyW'], ['back', 'Move back', 'KeyS'], ['left', 'Move left (strafe)', 'KeyA'], ['right', 'Move right (strafe)', 'KeyD'],
   ['jump', 'Jump', 'Space'], ['duck', 'Duck', 'ControlLeft'], ['walk', 'Walk', 'ShiftLeft'],
   ['use', 'Use / defuse', 'KeyE'], ['reload', 'Reload', 'KeyR'], ['lastweapon', 'Last weapon used', 'KeyQ'], ['drop', 'Drop weapon', 'KeyG'],
-  ['buy', 'Buy menu', 'KeyB'], ['team', 'Select team', 'KeyM'], ['scores', 'Show scores', 'Tab'], ['quit', 'Quick quit (close tab)', 'F10'],
+  ['buy', 'Buy menu', 'KeyB'], ['team', 'Select team', 'KeyM'], ['chat', 'Chat message (All)', 'KeyY'], ['teamchat', 'Team chat message', 'KeyU'], ['scores', 'Show scores', 'Tab'], ['quit', 'Quick quit (close tab)', 'F10'],
 ];
 export const DEFAULT_BINDS = Object.fromEntries(ACTIONS.map(([a, , k]) => [a, k]));
 export const binds = (() => { try { return { ...DEFAULT_BINDS, ...JSON.parse(localStorage.getItem('binds') ?? '{}') }; } catch { return { ...DEFAULT_BINDS }; } })();

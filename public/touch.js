@@ -17,7 +17,7 @@ const SHORT_NAME = {
 
 export function createTouchControls({
   player, weapons, getSettings, getYou, getRound, uiOpen, isJoined, nearBomb,
-  onUseStart, onUseStop, onMenu, onTeam, onBuy, onScoresToggle, onSpecNext, onSpecView, onWakeAudio, onEnterPlay,
+  onUseStart, onUseStop, onMenu, onTeam, onBuy, onChat, onScoresToggle, onSpecNext, onSpecView, onWakeAudio, onEnterPlay,
 }) {
   const root = document.createElement('div');
   root.id = 'touch-ui';
@@ -26,6 +26,7 @@ export function createTouchControls({
       <button type="button" class="t-pill" data-act="menu">Menu</button>
       <button type="button" class="t-pill" data-act="scores">Tab</button>
       <button type="button" class="t-pill" data-act="team">Team</button>
+      <button type="button" class="t-pill" data-act="chat">Chat</button>
       <button type="button" class="t-pill t-buy" data-act="buy">$ Buy</button>
     </div>
     <div id="touch-move-zone">
@@ -274,6 +275,7 @@ export function createTouchControls({
   tap(root.querySelector('[data-act="menu"]'), () => { resetInputs(); scoresOpen = false; onScoresToggle(false); onMenu(); });
   tap(scoresBtn, () => { scoresOpen = !scoresOpen; scoresBtn.classList.toggle('active', scoresOpen); onScoresToggle(scoresOpen); });
   tap(root.querySelector('[data-act="team"]'), () => { resetInputs(); scoresOpen = false; onScoresToggle(false); onTeam(); });
+  tap(root.querySelector('[data-act="chat"]'), () => { resetInputs(); scoresOpen = false; onScoresToggle(false); onChat?.(); });
   tap(buyBtn, () => { resetInputs(); scoresOpen = false; onScoresToggle(false); onBuy(); });
   tap(root.querySelector('[data-spec="view"]'), () => { onSpecView(); });
   tap(root.querySelector('[data-spec="next"]'), () => { onSpecNext(); });

@@ -17,6 +17,7 @@ import { binds, is } from './binds.js';
 import { createMovers } from './movers.js';
 import { createAmbience } from './ambience.js';
 import { createTouchControls } from './touch.js';
+import { createChat } from './chat.js';
 
 const q = new URLSearchParams(location.search);
 const MAP_NAME = /^[a-z0-9_]+$/.test(window.__map ?? '') ? window.__map : 'de_dust2'; // the server's map (server.config.json): public/maps/<name>/; also picks the map's agents (agents.js)
@@ -321,7 +322,8 @@ function onSnap(d, arrival) {
 }
 const netWarn = document.getElementById('netwarn');
 const PLAYER_NAME = window.__name || 'Player'; // asked for in index.html before the game loads
-const net = connectToServer({ name: PLAYER_NAME, map: MAP_NAME, onSnap, onNotice: (text) => hud.notice(text) });
+let chat = null;
+const net = connectToServer({ name: PLAYER_NAME, map: MAP_NAME, onSnap, onNotice: (text) => hud.notice(text), onChat: (m) => chat?.add(m) });
 net.name = PLAYER_NAME;
 const scoreboard = createScoreboard({ getRoster: () => roster, getRound: () => roundState, getMyId: () => net.id, mapName: MAP_NAME });
 try { await net.ready; } catch (e) { setLoad(30, 'Cannot join: the server is full or not running (npm start)'); throw e; }
@@ -354,7 +356,7 @@ const mainMenu = createMainMenu({
   onSettings: applySettings,
 });
 let touch = null;
-const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen());
+const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen() || chat?.isOpen());
 const canPlay = () => !uiOpen() && (!!document.pointerLockElement || !!(touch?.isEnabled() && joined));
 weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, canFire: canPlay, initial: { owned: you.owned, weapon: you.weapon } });
 devPanel = createDevPanel({ hud, weapons, range: window.__mode === 'range' });
@@ -396,12 +398,18 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
     if (mainMenu.capturing()) return; // Esc cancels a rebind, handled by the Keyboard tab
     if (mainMenu.isOpen()) { if (mainMenu.windowOpen()) mainMenu.closeWindow(); else document.exitFullscreen?.().catch(() => {}); } // Esc in the menu: out of fullscreen
-    else if (!buyMenu?.isOpen() && !teamMenu?.isOpen() && !devPanel?.isOpen()) { document.exitPointerLock(); mainMenu.open(); }
+    else if (chat?.isOpen()) chat.close(true);
+    else if (!buyMenu?.isOpen() && !teamMenu?.isOpen() && !devPanel?.isOpen()) { document.exitPointerLock?.(); mainMenu.open(); }
     return;
   }
   if (mainMenu.isOpen()) return; // the menu (and the Keyboard tab's rebinding) owns the keyboard
   if (e.target.closest?.('input, textarea, select')) return; // typing in a menu field is not game input
   if (document.pointerLockElement) e.preventDefault(); // while playing, game keys must not trigger browser shortcuts (Ctrl+D bookmark, Ctrl+S, F5, Ctrl+plus zoom...)
+  if ((is('chat', e.code) || is('teamchat', e.code)) && !e.repeat && !uiOpen() && joined) {
+    e.preventDefault();
+    chat.open(is('teamchat', e.code) ? 'team' : 'all');
+    return;
+  }
   keys.add(e.code);
   if (is('team', e.code) && !teamMenu.isOpen()) { document.exitPointerLock?.(); teamMenu.open(); }
   if (is('use', e.code) && !e.repeat && document.pointerLockElement) startUse();
@@ -429,7 +437,7 @@ addEventListener('mousedown', (e) => {
   else if (e.button === 2) specFirstPerson = !specFirstPerson;
 });
 addEventListener('keyup', (e) => { keys.delete(e.code); if (is('use', e.code)) stopDefuse(); if (is('scores', e.code)) scoreboard.show(false); });
-addEventListener('keydown', (e) => { if (is('scores', e.code) && !mainMenu.isOpen()) { e.preventDefault(); if (!e.repeat) scoreboard.show(true); } }); // hold Tab: scoreboard
+addEventListener('keydown', (e) => { if (is('scores', e.code) && !mainMenu.isOpen() && !chat?.isOpen()) { e.preventDefault(); if (!e.repeat) scoreboard.show(true); } }); // hold Tab: scoreboard
 addEventListener('blur', () => scoreboard.show(false));
 addEventListener('blur', () => { keys.clear(); stopDefuse(); });
 // Raw mouse input: no OS pointer acceleration, which is what made fast 180s feel uneven.
@@ -448,6 +456,11 @@ const startPlay = () => {
   if (!touch?.isEnabled()) lockPointer();
   if (!q.has('windowed')) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.then(() => navigator.keyboard?.lock?.())?.catch(() => {});
 };
+chat = createChat({
+  net,
+  onOpen: () => { keys.clear(); if (document.pointerLockElement) document.exitPointerLock?.(); },
+  onClose: (restore) => { if (restore && joined && !uiOpen() && !touch?.isEnabled()) startPlay(); },
+});
 touch = createTouchControls({
   player, weapons,
   getSettings: () => settings,
@@ -461,6 +474,7 @@ touch = createTouchControls({
   onMenu: () => { if (!uiOpen()) mainMenu.open(); },
   onTeam: () => { if (!teamMenu.isOpen()) teamMenu.open(); },
   onBuy: () => { if (buyMenu.isOpen()) buyMenu.close(); else if (!uiOpen()) buyMenu.open(); },
+  onChat: () => { if (!uiOpen()) chat.open(); },
   onScoresToggle: (on) => scoreboard.show(on),
   onSpecNext: () => { specIdx++; },
   onSpecView: () => { specFirstPerson = !specFirstPerson; },

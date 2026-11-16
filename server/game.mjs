@@ -947,6 +947,20 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
         if (full) send({ t: 'notice', text: 'That team is full: it already has as many players as yours' });
         else moveTeam(ent, m.team);
       }
+      else if (m.t === 'chat' && typeof m.text === 'string') {
+        const text = m.text.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 140);
+        if (!text) return;
+        const nowMs = performance.now();
+        if (nowMs - (ent.lastChatAt ?? 0) < 350) return;
+        ent.lastChatAt = nowMs;
+        const scope = m.scope === 'team' ? 'team' : 'all';
+        const payload = JSON.stringify({ t: 'chat', id: ent.id, name: ent.name, team: ent.team, alive: ent.alive ? 1 : 0, scope, text });
+        for (const e of ents.values()) {
+          if (!e.ws || e.ws.readyState !== 1) continue;
+          if (scope === 'team' && e.team !== ent.team) continue;
+          e.ws.send(payload);
+        }
+      }
     });
     let pingAt = 0; // latency for the scoreboard: a WebSocket ping every second, timed to its pong
     const pinger = setInterval(() => { if (ws.readyState === 1) { pingAt = performance.now(); ws.ping(); } }, 1000);
