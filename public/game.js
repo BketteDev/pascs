@@ -292,19 +292,27 @@ function onSnap(d, arrival) {
   d.mv?.forEach((v, i) => setMover(i, v));
   players?.applySnapshot(d, arrival);
   const y = d.you, jumped = Math.hypot(y.o[0] - player.o[0], y.o[1] - player.o[1], y.o[2] - player.o[2]) > 150;
+  const spawned = y.alive && (!you.alive || you.team !== y.team || roundState.number !== d.round.number);
   // reconcile: compare where we predicted to be at the acknowledged cmd with where the server says we were; replay the rest on a mismatch
   const i = pending.findIndex((p) => p.cmd.seq === y.ack);
-  if (i >= 0) {
+  if (spawned && !q.has('freeze')) {
+    applyServerState(y);
+    pending.length = 0;
+  } else if (i >= 0) {
     const predicted = pending[i].o; pending.splice(0, i + 1);
     if (Math.hypot(predicted[0] - y.o[0], predicted[1] - y.o[1], predicted[2] - y.o[2]) > 0.25) {
       applyServerState(y);
       for (const p of pending) { player.tick(cmdInput(p.cmd)); p.o = [...player.o]; }
     }
   } else if (jumped && !q.has('freeze')) { applyServerState(y); pending.length = 0; } // ?freeze: the camera stays where ?pos put it
-  if (jumped) { player.yaw = y.yaw ?? player.yaw; player.pitch = 0; player.prev = { o: [...player.o], eyeZ: player.eyeZ }; } // respawn: take the spawn position and view
+  if (spawned || jumped) { player.yaw = y.yaw ?? player.yaw; player.pitch = 0; player.prev = { o: [...player.o], eyeZ: player.eyeZ }; } // take the spawn position and view
   if (y.hp < you.hp && y.alive) { hurtEl.style.opacity = Math.min(0.55, (you.hp - y.hp) / 60 + 0.18); setTimeout(() => { hurtEl.style.opacity = 0; }, 90); }
   if (you.alive && !y.alive && !deadAt) deadAt = arrival; // died (the death event may come a moment later)
-  if (!you.alive && y.alive) { deadAt = 0; killedBy = ''; specIdx = 0; specTargetId = null; players?.setSpectated(null); weapons?.setSpectate(null); players?.removeSelf(net.id); weapons.state.held = false; } // respawned: our body goes away
+  if (spawned) { // return from the spectator camera and discard any held fire input
+    deadAt = 0; killedBy = ''; specIdx = 0; specTargetId = null;
+    players?.setSpectated(null); players?.removeSelf(net.id);
+    if (weapons) { weapons.setSpectate(null); weapons.state.held = false; }
+  }
   if (y.kit && !you.kit) play('items/defuser_equip', 0.8); // bought a defuse kit
   you = y; roundState = d.round;
   if (you.alive || !specTargetId) hud.setStats({ money: y.money, hp: y.hp, armor: y.armor, helmet: y.helmet });
@@ -444,10 +452,13 @@ addEventListener('blur', () => { keys.clear(); stopDefuse(); });
 // Raw mouse input: no OS pointer acceleration, which is what made fast 180s feel uneven.
 const lockPointer = () => {
   const el = renderer.domElement;
+  const standardLock = () => {
+    try { el.requestPointerLock?.()?.catch(() => {}); } catch { /* the canvas can be unfocused */ }
+  };
   try {
     const p = el.requestPointerLock?.({ unadjustedMovement: true });
-    if (p?.catch) p.catch(() => { try { el.requestPointerLock?.(); } catch { /* ignored */ } });
-  } catch { try { el.requestPointerLock?.(); } catch { /* ignored */ } }
+    if (p?.catch) p.catch(standardLock);
+  } catch { standardLock(); }
 };
 const wakeAudio = () => { try { const c = audio(); if (c.state === 'suspended') c.resume(); } catch {} };
 // Pointer lock must be requested straight from the click (user gesture), so it comes first and never waits on anything.

@@ -336,8 +336,18 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     assert(!me.alive, 'a new round does not spawn spectators');
     fake.handlers.message(JSON.stringify({ t: 'team', team: 't' }));
     await sleep(50);
-    assert(me.team === 't' && me.owned.has('glock'), 'a spectator can join a team');
-    console.log('spectate ok');
+    assert(me.team === 't' && me.alive && me.owned.has('glock'), 'a spectator can join a team at the start of a round');
+    const newcomer = { ...fake, handlers: {}, last: null };
+    g7.connect(newcomer);
+    newcomer.handlers.message(JSON.stringify({ t: 'join', name: 'Newcomer', team: 'spec' }));
+    const late = [...g7.ents.values()].find((e) => e.name === 'Newcomer');
+    Object.assign(g7.round, { phase: 'live', left: 30 });
+    newcomer.handlers.message(JSON.stringify({ t: 'team', team: 'ct' }));
+    assert(late.alive && late.weapon === 'usp' && late.p.o.some(Boolean), 'a first-time player spawns armed during a live round');
+    newcomer.handlers.message(JSON.stringify({ t: 'team', team: 'spec' }));
+    newcomer.handlers.message(JSON.stringify({ t: 'team', team: 'ct' }));
+    assert(!late.alive, 'switching through spectator does not grant a second spawn in the same round');
+    console.log('spectate and first spawn ok');
     g7.stop();
   }
   { // weapon drop (G), death drop, walk-over pickup, E swap, and spectator money field

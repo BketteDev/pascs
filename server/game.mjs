@@ -100,7 +100,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     ent.p.prev = { o: [...s.o], eyeZ: 64 };
     ent.p.maxSpeed = ent.hostage ? 250 : WEAPONS[ent.weapon].speed;
     if (ent.hostage) Object.assign(ent.hostage, { leader: 0, path: null, stuck: 0 });
-    ent.stepTimer = 0; ent.alive = true; ent.health = 100; ent.planting = ent.defusing = null; ent.queue.length = 0;
+    ent.stepTimer = 0; ent.alive = true; ent.hasSpawned = true; ent.health = 100; ent.planting = ent.defusing = null; ent.queue.length = 0;
     if (ent.ai) Object.assign(ent.ai, { path: null, stuck: 0, enemy: 0, threat: 0, shots: 0, nextShot: 0, ammo: {}, reloadUntil: 0, blindUntil: 0 });
   }
   const humans = () => [...ents.values()].filter((e) => !e.bot);
@@ -135,8 +135,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   function moveTeam(ent, team) {
     if (bomb.carrier === ent.id) dropBomb(ent);
     ent.team = team; resetLoadout(ent);
-    if (round.phase === 'freeze' && team !== 'spec') spawn(ent); // still at the start: play right away
-    else { ent.alive = false; ent.health = 0; ent.planting = ent.defusing = null; } // mid-round: sit out until the next round, like CS
+    if (team !== 'spec' && (round.phase === 'freeze' || (round.phase === 'live' && !ent.hasSpawned))) spawn(ent);
+    else { ent.alive = false; ent.health = 0; ent.planting = ent.defusing = null; } // players who already spawned wait for the next round
     fillBots();
   }
   function autoBalance() { // at the start of each round: move the newest human off a team that has 2+ more humans
