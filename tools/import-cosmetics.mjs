@@ -37,6 +37,7 @@ const gloveStyles = [
   ['glove-driver', 'Driver Gloves', 'glove_slick/v_glove_slick'],
   ['glove-handwraps', 'Leather Hand Wraps', 'glove_handwrap_leathery/v_glove_handwrap_leathery'],
   ['glove-fullfinger', 'Full-Finger Gloves', 'glove_fullfinger/v_glove_fullfinger'],
+  ['glove-specialist', 'Specialist Gloves', 'glove_specialist/v_glove_specialist'],
 ];
 const models = [
   ...Object.entries(knifeNames).map(([name, label]) => ({ weapon: 'knife', id: name, label, materials: materialRoot, base: path.join(modelRoot, 'v_knife_' + name) })),
@@ -68,17 +69,36 @@ const aliases = {
   smg_mac10: 'smg_mac10/smg_mac10.vtf',
   snip_scar20: '../cs2/weapon_snip_scar20/scar20_c.vtf',
 };
+const goldPaint = (folder, inner, material) => ({ goldSrc: pack(folder, inner), material });
 const paints = {
   bayonet: [['emerald', 'Doppler Emerald', 'knife_bayonet/weapon_bayonet-am_emerald_marbleized-diffuse.vtf']],
   butterfly: [
     ['emerald', 'Doppler Emerald', 'knife_butterfly/weapon_knife_butterfly-am_emerald_marbleized-diffuse.vtf'],
     ['love', 'Love', 'knife_butterfly/LOVE.vtf'],
     ['star', 'Star', 'knife_butterfly/STAR.vtf'],
+    ['crimson', 'Crimson', goldPaint('pack-all-gloves', 'Pack all gloves/pack occult/v_knife.mdl', 'butterfly.bmp')],
+    ['ultra-violet', 'Ultra Violet', goldPaint('pack-all-gloves', 'Pack all gloves/pack ultra violet/v_knife.mdl', 'butterfly.bmp')],
+  ],
+  karambit: [
+    ['black-steel', 'Black Steel', goldPaint('karambit-marble', 'cs.go Karambit marble-by Alex/variants/default/v_knife.mdl', 'karam_red.bmp')],
+    ['marble-blue', 'Marble Blue', goldPaint('karambit-marble', 'cs.go Karambit marble-by Alex/variants/blue/v_knife.mdl', 'karam_blue.bmp')],
+    ['marble-green', 'Marble Green', goldPaint('karambit-marble', 'cs.go Karambit marble-by Alex/variants/green/v_knife.mdl', 'karam_green.bmp')],
+    ['marble-purple', 'Marble Purple', goldPaint('karambit-marble', 'cs.go Karambit marble-by Alex/variants/purple/v_knife.mdl', 'karam_purple.bmp')],
+    ['marble-red', 'Marble Red', goldPaint('karambit-marble', 'cs.go Karambit marble-by Alex/variants/red/v_knife.mdl', 'karam_red.bmp')],
   ],
   falchion: [['ruby', 'Doppler Ruby', 'knife_falchion_advanced/6_am_falchion_doppler_ruby.vtf']],
   survival_bowie: [['sapphire', 'Doppler Sapphire', 'knife_survival_bowie.rar/knife_survival_bowie/weapon_knife_survival_bowie-am_sapphire_marbleized-diffuse.vtf']],
   rif_ak47: [['professional', 'Slate', 'rif_ak47_ByFerris4227/weapon_ak47-gs_ak47_professional-diffuse.vtf']],
   pist_deagle: [['crimson-web', 'Crimson Web', 'pist_deagle_ByFerris4227.rar/pist_deagle_ByFerris4227/weapon_deagle-hy_webs_darker-diffuse.vtf']],
+  'glove-driver': [
+    ['flowers', 'Flowers', goldPaint('pack-all-gloves', 'Pack all gloves/pack flowers/v_ak47.mdl', 'driver.bmp')],
+  ],
+  'glove-sport': [
+    ['occult', 'Occult', goldPaint('pack-all-gloves', 'Pack all gloves/pack occult/v_ak47.mdl', 'sport_left.bmp')],
+  ],
+  'glove-specialist': [
+    ['pillow', 'Pillow', goldPaint('karambit-marble', 'cs.go Karambit marble-by Alex/variants/red/v_knife.mdl', 'specialist_left.bmp')],
+  ],
 };
 const viewMaterials = 'models/weapons/v_models';
 const archiveMaterials = pack('paint-archives', 'v_models');
@@ -107,12 +127,17 @@ function saveTexture(file, pixels) {
   const W = pixels?.W ?? source.readUInt16LE(16), H = pixels?.H ?? source.readUInt16LE(18);
   const stride = Math.max(1, Math.ceil(Math.max(W, H) / 1024));
   const width = Math.ceil(W / stride), height = Math.ceil(H / stride);
-  if (!old || old.length < 24 || old.readUInt32BE(16) !== width || old.readUInt32BE(20) !== height) {
+  if (!old || old.length < 24 || old.readUInt32BE(16) < width || old.readUInt32BE(20) < height) {
     const { rgba } = pixels ?? vtfToRgba(source);
     const data = stride === 1 ? rgba : Buffer.alloc(width * height * 4);
     if (stride > 1) for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-      const src = (y * stride * W + x * stride) * 4, dst = (y * width + x) * 4;
-      rgba.copy(data, dst, src, src + 4);
+      let r = 0, g = 0, b = 0, a = 0, n = 0;
+      for (let dy = 0; dy < stride && y * stride + dy < H; dy++) for (let dx = 0; dx < stride && x * stride + dx < W; dx++) {
+        const s = ((y * stride + dy) * W + x * stride + dx) * 4;
+        r += rgba[s]; g += rgba[s + 1]; b += rgba[s + 2]; a += rgba[s + 3]; n++;
+      }
+      const d = (y * width + x) * 4;
+      data[d] = r / n + .5 | 0; data[d + 1] = g / n + .5 | 0; data[d + 2] = b / n + .5 | 0; data[d + 3] = a / n + .5 | 0;
     }
     fs.writeFileSync(target, png(width, height, 4, data));
   }
@@ -255,11 +280,33 @@ function bake(item) {
   const entry = { id: item.id, name: item.label, model: dest, preview: first.tex };
   if (separateHands) entry.gloves = true;
   const variants = [];
+  const targets = glove ? meta.meshes.filter((m) => m.material.startsWith('glove_')) : [first];
+  if (item.id === 'glove-driver') {
+    const clean = goldPaint('pack-all-gloves', 'Pack all gloves/pack wave chaser/v_ak47.mdl', 'driver.bmp');
+    const gs = loadGoldSrc(clean.goldSrc), mesh = gs.meshes.find((m) => m.material === clean.material);
+    if (mesh) {
+      entry.preview = saveTexture('glove-driver-clean/' + clean.material, gs.pixels(mesh.texture));
+      entry.name = 'Driver Gloves · Wave Chaser';
+      entry.textures = Object.fromEntries(targets.map((m) => [m.material, entry.preview]));
+    }
+  }
   for (const [id, finish, source] of paints[item.id] ?? []) {
-    const file = [path.join(materialRoot, viewMaterials, source), path.join(archiveMaterials, source)].find((p) => fs.existsSync(p));
-    if (!file) { console.warn('Missing paint: ' + source); continue; }
-    const preview = saveTexture(file);
-    if (preview !== first.tex) variants.push({ ...entry, id: item.id + '-' + id, name: item.weapon === 'knife' ? item.label + ' · ' + finish : finish, preview, textures: { [first.material]: preview } });
+    let preview;
+    if (source.goldSrc) {
+      if (!fs.existsSync(source.goldSrc)) { console.warn('Missing paint: ' + source.goldSrc); continue; }
+      const gs = loadGoldSrc(source.goldSrc), mesh = gs.meshes.find((m) => m.material === source.material);
+      if (!mesh) { console.warn('Missing paint material: ' + source.material); continue; }
+      preview = saveTexture(item.id + '-' + id + '/' + source.material, gs.pixels(mesh.texture));
+    } else {
+      const file = [path.join(materialRoot, viewMaterials, source), path.join(archiveMaterials, source)].find((p) => fs.existsSync(p));
+      if (!file) { console.warn('Missing paint: ' + source); continue; }
+      preview = saveTexture(file);
+    }
+    if (preview !== first.tex) variants.push({
+      ...entry, id: item.id + '-' + id,
+      name: item.weapon === 'knife' || glove ? item.label + ' · ' + finish : finish,
+      preview, textures: Object.fromEntries(targets.map((m) => [m.material, preview])),
+    });
   }
   return [entry, ...variants];
 }

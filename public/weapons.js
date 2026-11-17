@@ -135,7 +135,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
         geo.setAttribute('skinIndex', new THREE.BufferAttribute(boneOffset ? indices.map((index) => index + boneOffset) : indices, 4));
         if (m.indexCount) geo.setIndex(new THREE.BufferAttribute(new Uint32Array(buffer, m.idx, m.indexCount), 1));
         const mat = new THREE.ShaderMaterial({ uniforms: { map: { value: white }, cutoff: { value: m.alpha === 1 ? 0.5 : 0 } }, vertexShader: vmVertex, fragmentShader: vmFragment, transparent: m.alpha === 2 });
-        const paint = !boneOffset && look?.textures?.[m.material], file = paint || m.tex;
+        const paint = boneOffset ? glove?.textures?.[m.material] : look?.textures?.[m.material], file = paint || m.tex;
         if (file) loadTex(modelBase || paint ? 'cosmetics/' + file : 'weapons/tex/' + file, (t) => { mat.uniforms.map.value = t; });
         const mesh = new THREE.SkinnedMesh(geo, mat);
         mesh.bindMode = THREE.DetachedBindMode; mesh.bind(skeleton, new THREE.Matrix4());

@@ -40,6 +40,16 @@
       "gloves": true
     },
     {
+      "id": "butterfly-crimson",
+      "name": "Butterfly Knife · Crimson",
+      "model": "models/butterfly",
+      "preview": "tex/b44cc84a77c771c393.png",
+      "gloves": true,
+      "textures": {
+        "knife_butterfly": "tex/b44cc84a77c771c393.png"
+      }
+    },
+    {
       "id": "butterfly-emerald",
       "name": "Butterfly Knife · Doppler Emerald",
       "model": "models/butterfly",
@@ -57,6 +67,16 @@
       "gloves": true,
       "textures": {
         "knife_butterfly": "tex/23d5a22440dd397536.png"
+      }
+    },
+    {
+      "id": "butterfly-ultra-violet",
+      "name": "Butterfly Knife · Ultra Violet",
+      "model": "models/butterfly",
+      "preview": "tex/b7bca6078d78889014.png",
+      "gloves": true,
+      "textures": {
+        "knife_butterfly": "tex/b7bca6078d78889014.png"
       }
     },
     {
@@ -124,6 +144,56 @@
       "model": "models/karambit",
       "preview": "tex/cf2f79cdaa07753671.png",
       "gloves": true
+    },
+    {
+      "id": "karambit-black-steel",
+      "name": "Karambit · Black Steel",
+      "model": "models/karambit",
+      "preview": "tex/9d0f8a92ae32efe3eb.png",
+      "gloves": true,
+      "textures": {
+        "knife_karambit": "tex/9d0f8a92ae32efe3eb.png"
+      }
+    },
+    {
+      "id": "karambit-marble-blue",
+      "name": "Karambit · Marble Blue",
+      "model": "models/karambit",
+      "preview": "tex/e16f63903bd8824eb4.png",
+      "gloves": true,
+      "textures": {
+        "knife_karambit": "tex/e16f63903bd8824eb4.png"
+      }
+    },
+    {
+      "id": "karambit-marble-green",
+      "name": "Karambit · Marble Green",
+      "model": "models/karambit",
+      "preview": "tex/84524645b2b41d23be.png",
+      "gloves": true,
+      "textures": {
+        "knife_karambit": "tex/84524645b2b41d23be.png"
+      }
+    },
+    {
+      "id": "karambit-marble-purple",
+      "name": "Karambit · Marble Purple",
+      "model": "models/karambit",
+      "preview": "tex/e0d6d2d611ded9fe8f.png",
+      "gloves": true,
+      "textures": {
+        "knife_karambit": "tex/e0d6d2d611ded9fe8f.png"
+      }
+    },
+    {
+      "id": "karambit-marble-red",
+      "name": "Karambit · Marble Red",
+      "model": "models/karambit",
+      "preview": "tex/e9bc470efe51f14106.png",
+      "gloves": true,
+      "textures": {
+        "knife_karambit": "tex/e9bc470efe51f14106.png"
+      }
     },
     {
       "id": "printstream-knife",
@@ -503,10 +573,24 @@
   ],
   "gloves": [
     {
-      "id": "glove-driver",
-      "name": "Driver Gloves",
+      "id": "glove-driver-flowers",
+      "name": "Driver Gloves · Flowers",
       "model": "models/glove-driver",
-      "preview": "tex/c41d5d3575fc002280.png"
+      "preview": "tex/d5398d6a7b775c49a7.png",
+      "textures": {
+        "glove_slick_left": "tex/d5398d6a7b775c49a7.png",
+        "glove_slick_right": "tex/d5398d6a7b775c49a7.png"
+      }
+    },
+    {
+      "id": "glove-driver",
+      "name": "Driver Gloves · Wave Chaser",
+      "model": "models/glove-driver",
+      "preview": "tex/da070b640372c7c63d.png",
+      "textures": {
+        "glove_slick_left": "tex/da070b640372c7c63d.png",
+        "glove_slick_right": "tex/da070b640372c7c63d.png"
+      }
     },
     {
       "id": "glove-fullfinger",
@@ -533,10 +617,36 @@
       "preview": "tex/9eb1ad20de1335891a.png"
     },
     {
+      "id": "glove-specialist",
+      "name": "Specialist Gloves",
+      "model": "models/glove-specialist",
+      "preview": "tex/14c421ccf9fe454a2f.png"
+    },
+    {
+      "id": "glove-specialist-pillow",
+      "name": "Specialist Gloves · Pillow",
+      "model": "models/glove-specialist",
+      "preview": "tex/1ebaf6a59054131fb2.png",
+      "textures": {
+        "glove_specialist_right": "tex/1ebaf6a59054131fb2.png",
+        "glove_specialist_left": "tex/1ebaf6a59054131fb2.png"
+      }
+    },
+    {
       "id": "glove-sport",
       "name": "Sport Gloves",
       "model": "models/glove-sport",
       "preview": "tex/d33c2614251523cdd9.png"
+    },
+    {
+      "id": "glove-sport-occult",
+      "name": "Sport Gloves · Occult",
+      "model": "models/glove-sport",
+      "preview": "tex/85b49906b8ea52f267.png",
+      "textures": {
+        "glove_sporty_left": "tex/85b49906b8ea52f267.png",
+        "glove_sporty_right": "tex/85b49906b8ea52f267.png"
+      }
     }
   ]
 }
