@@ -657,8 +657,18 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   }
   function fired(ent, m) { // a shot: rate of fire is a token bucket at the weapon's cycle (3 shots of slack for network bunching)
     const w = WEAPONS[m.w];
-    if (!ent.alive || !ent.owned.has(m.w) || !w || w.melee || w.grenade || w.c4) return;
+    if (!ent.alive || !ent.owned.has(m.w) || !w || w.grenade || w.c4) return;
     const t = now();
+    if (w.melee) {
+      if (t - (ent.knifeSwingAt ?? -9) < 0.25) return;
+      ent.knifeSwingAt = t;
+      const e = ent.p.eye;
+      if (isVec(m.to) && movers.defs.length) {
+        const d = m.to.map((v, k) => v - e[k]), l = Math.hypot(d[0], d[1], d[2]);
+        if (l > 0 && l < 96) damageMovers(e, m.to.map((v, k) => v + (d[k] / l) * 8), w.damage);
+      }
+      return;
+    }
     ent.fireTok = Math.min((ent.fireTok ?? 3) + (t - (ent.fireAt ?? t)) / (w.cycle * 0.9), 3); ent.fireAt = t;
     if (ent.fireTok < 1) return; // faster than the gun can fire: dropped
     ent.fireTok -= 1; ent.firedW = m.w; ent.hitUntil = t + 0.5; ent.hitTok = w.pellets ?? 1; // a shot's hits follow it in order: no banking across shots

@@ -349,6 +349,17 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       if (m.material.transparent) m.material.opacity = 0.75 * Math.min(1, s.life / 0.8); // fades out at the end
     }
   }
+  const fxTracerGeo = new THREE.BoxGeometry(1, 0.24, 0.24).translate(-0.5, 0, 0);
+  const fxTracerMat = new THREE.MeshBasicMaterial({ color: 0xffe4a8, transparent: true, opacity: 0.48, blending: THREE.AdditiveBlending, depthWrite: false });
+  const fxTracers = [];
+  function spawnTracer(from, to) {
+    const d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]], len = Math.hypot(...d);
+    if (len < 32) return;
+    let tr = fxTracers.find((x) => !x.mesh.visible);
+    if (!tr) { tr = { mesh: new THREE.Mesh(fxTracerGeo, fxTracerMat) }; tr.mesh.frustumCulled = false; worldRoot.add(tr.mesh); fxTracers.push(tr); }
+    Object.assign(tr, { from, dir: d.map((v) => v / len), len, at: 0 }); tr.mesh.visible = true;
+    tr.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), new THREE.Vector3(...tr.dir));
+  }
   function stepFx(dt) {
     for (const f of fx) {
       if (!f.sp.visible) continue;
@@ -357,6 +368,14 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       if (f.grav < 0) { f.v[0] *= 1 - dt * 2.5; f.v[1] *= 1 - dt * 2.5; } // clouds slow down in the air
       f.sp.position.x += f.v[0] * dt; f.sp.position.y += f.v[1] * dt; f.sp.position.z += f.v[2] * dt;
       f.sp.scale.setScalar(f.from + (f.to - f.from) * k); f.sp.material.opacity = 1 - k * k;
+    }
+    for (const tr of fxTracers) {
+      if (!tr.mesh.visible) continue;
+      tr.at += dt * 9500;
+      const head = Math.min(tr.at, tr.len), tail = Math.max(0, tr.at - 260);
+      if (tail >= tr.len) { tr.mesh.visible = false; continue; }
+      tr.mesh.position.set(tr.from[0] + tr.dir[0] * head, tr.from[1] + tr.dir[1] * head, tr.from[2] + tr.dir[2] * head);
+      tr.mesh.scale.x = Math.max(head - tail, 1);
     }
   }
   const surfaceAt = (pos, n) => { const r = trace(world, [pos[0] + n[0] * 2, pos[1] + n[1] * 2, pos[2] + n[2] * 2], [pos[0] - n[0] * 4, pos[1] - n[1] * 4, pos[2] - n[2] * 4], [0, 0, 0], [0, 0, 0], bulletLimit); return surfaces?.[surfOf?.[r.entry] ?? 0] ?? 'concrete'; };
@@ -377,7 +396,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
 
   // ---------- state ----------
   const ammo = Object.fromEntries(ORDER.map((k) => [k, { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve }]));
-  const s = { cur: initial.weapon, last: 'knife', pin: null, throwing: null, planting: false, clickAt: 0, nextFire: 0, deployEnd: 0, reload: null, flashUntil: 0, burst: {}, burstLeft: 0, burstNext: 0, last: null, stats: { shots: 0, hits: 0, hs: 0, kills: 0 }, shots: 0, decayAt: 0, acc: 0.9, lastFire: -10, dir: 1, zoom: 0, punch: [0, 0], held: false, wasHeld: false, bob: 0, emptyClicked: false };
+  const s = { cur: initial.weapon, last: 'knife', pin: null, throwing: null, planting: false, clickAt: 0, nextFire: 0, deployEnd: 0, reload: null, flashUntil: 0, burst: {}, burstLeft: 0, burstNext: 0, last: null, stats: { shots: 0, hits: 0, hs: 0, kills: 0 }, shots: 0, decayAt: 0, acc: 0.9, lastFire: -10, dir: 1, zoom: 0, punch: [0, 0], kick: 0, held: false, wasHeld: false, bob: 0, emptyClicked: false };
   const now = () => performance.now() / 1000;
   const def = () => WEAPONS[s.cur];
 
@@ -401,7 +420,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     net.send({ t: 'weapon', w: key });
     vms[s.cur].group.visible = false; s.last = s.cur; s.cur = key; vms[key].group.visible = true;
     playAct(key, 'ACT_VM_DRAW');
-    stopPlant(); s.reload = null; s.pin = null; s.throwing = null; s.zoom = 0; s.resumeZoom = 0; s.burstLeft = 0; s.deployEnd = now() + def().deploy; s.nextFire = s.deployEnd; s.shots = 0; s.acc = def().accuracy.start ?? 0.9;
+    stopPlant(); s.reload = null; s.pin = null; s.throwing = null; s.zoom = 0; s.resumeZoom = 0; s.burstLeft = 0; s.deployEnd = now() + def().deploy; s.nextFire = s.deployEnd; s.shots = 0; s.kick = 0; s.acc = def().accuracy.start ?? 0.9;
     applySpeed(); hudUpdate(); showList();
     if (def().sounds.deploy) play(def().sounds.deploy, 0.5);
   }
@@ -444,22 +463,22 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   // one bullet: follows the wall-bang path, leaves a hole at every surface it meets, stops at the first body (the server re-checks the damage)
   // the hit report: the ray and the server tick we were looking at let the server rewind the target and check it (lag compensation)
   const hitMsg = (body, eye, dir, extra) => ({ t: 'hit', target: body.bot.id, group: body.group, bone: body.bone, w: s.cur, o: eye.map((v) => Math.round(v * 10) / 10), d: dir.map((v) => Math.round(v * 1e4) / 1e4), rt: targets().renderTick(), ...extra });
-  function shootRay(eye, dir, d, hits) { // returns where the bullet first stopped or hit (others draw the tracer to it)
-    let first = null, walls = 0;
+  function shootRay(eye, dir, d, hits) { // returns where the bullet ended or hit (breaks multiple panes & guides tracer)
+    let end = null, walls = 0;
     for (const seg of march(ctx, eye, dir, 8192, d).segments) {
       const body = targets()?.hitTest(seg.from, dir, seg.len);
       if (body) {
         targets().feedback(body, seg.from, dir); hits.push(hitMsg(body, eye, dir));
         s.last = { dist: Math.round(seg.start + body.dist), walls, group: body.group };
-        return first ?? seg.from.map((v, i) => v + dir[i] * body.dist);
+        return seg.from.map((v, i) => v + dir[i] * body.dist);
       }
       if (seg.impact) {
-        addHole(seg.impact.pos, seg.impact.n, seg.impact.surface); first ??= seg.impact.pos;
+        addHole(seg.impact.pos, seg.impact.n, seg.impact.surface); end = seg.impact.pos;
         if (seg.impact.exit) { addHole(seg.impact.exit.pos, seg.impact.exit.n, seg.impact.surface); walls++; }
-      } else first ??= seg.from.map((v, i) => v + dir[i] * seg.len);
+      } else end = seg.from.map((v, i) => v + dir[i] * seg.len);
     }
-    s.last = { dist: first ? Math.round(Math.hypot(first[0] - eye[0], first[1] - eye[1], first[2] - eye[2])) : 8192, walls, group: null };
-    return first;
+    s.last = { dist: end ? Math.round(Math.hypot(end[0] - eye[0], end[1] - eye[1], end[2] - eye[2])) : 8192, walls, group: null };
+    return end;
   }
 
   // ---- CS:S accuracy / spread (m_flAccuracy) ----
@@ -505,7 +524,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       const range = alt ? d.stabRange : d.melee, dir = viewDir(player.yaw + s.punch[1] * rad, player.pitch + s.punch[0] * rad), hit = rayTo(eye, dir, range);
       const body = targets()?.hitTest(eye, dir, range);
       if (body) { targets().feedback(body, eye, dir); net.send(hitMsg(body, eye, dir, { alt: alt ? 1 : 0 })); }
-      else if (hit) { addHole(hit.pos, hit.n); play(d.sounds.hitWall, 0.7); } else play(d.sounds.fire, 0.6);
+      else if (hit) { addHole(hit.pos, hit.n); net.send({ t: 'fire', w: s.cur, to: hit.pos.map(Math.round) }); play(d.sounds.hitWall, 0.7); } else play(d.sounds.fire, 0.6);
       const vm = vms[s.cur];
       const slashes = alt ? findSeqs(vm, 'ACT_VM_SECONDARYATTACK').concat(vm.seqs.filter((q) => /stab/i.test(q.name))) : findSeqs(vm, 'ACT_VM_HITCENTER').filter((q) => /slash|light_/i.test(q.name));
       s.inspectEnd = 0;
@@ -521,12 +540,17 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     // aim = view angles + current punch; then the triangular spread offset along right/up (FX_FireBullets)
     const ay = player.yaw + s.punch[1] * rad, ap = player.pitch + s.punch[0] * rad, fwd = viewDir(ay, ap);
     const right = [Math.sin(ay), -Math.cos(ay), 0], up = [-Math.sin(ap) * Math.cos(ay), -Math.sin(ap) * Math.sin(ay), Math.cos(ap)];
+    const rx = s.zoom ? 0 : (d.rightHanded ? -4.2 : 4.2), uz = s.zoom ? -2.2 : -3.2;
+    const tFrom = [eye[0] + fwd[0] * 22 + right[0] * rx + up[0] * uz, eye[1] + fwd[1] * 22 + right[1] * rx + up[1] * uz, eye[2] + fwd[2] * 22 + right[2] * rx + up[2] * uz];
     for (let i = 0; i < (d.pellets ?? 1); i++) {
       const x = tri() * spread, y = tri() * spread; // each shotgun pellet gets its own offset
       let dir = [fwd[0] + right[0] * x + up[0] * y, fwd[1] + right[1] * x + up[1] * y, fwd[2] + right[2] * x + up[2] * y]; const dl = Math.hypot(...dir); dir = dir.map((v) => v / dl);
       const end = shootRay(eye, dir, d, hits); s.lastEnd = i === 0 ? end : s.lastEnd;
+      if (!d.silenced && end) spawnTracer(tFrom, end);
     }
     if (d.recoil.type === 'kickback') kickBack(d.recoil); else if (d.recoil.type === 'punch') s.punch[0] += d.recoil.pitch;
+    s.kick = Math.min(1.8, (s.kick || 0) + Math.min(1.6, 0.35 + (d.damage * (d.pellets ?? 1)) / 95) * 0.85);
+    hud.setSpread(Math.tan((crosshairDeg() * Math.PI) / 180), fov(73.74), [s.punch[0] * 0.55, s.punch[1] * 0.55]);
     s.flashUntil = t + 0.06; s.flashRoll = null;
     playAct(s.cur, a.mag === 0 ? 'ACT_VM_DRYFIRE' : 'ACT_VM_PRIMARYATTACK', 'ACT_VM_PRIMARYATTACK');
     net.send({ t: 'fire', w: s.cur, to: s.lastEnd?.map((v) => Math.round(v)) }); // others hear the shot and see its tracer
@@ -690,17 +714,19 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   function update(dt) {
     if (s.specCur) setSpectate(null);
     const t = now(), d = def(), a = ammo[s.cur];
-    // view punch decay (Source DecayPunchAngle, sped up 4x so the aim snaps back to the starting point quickly)
-    const len = Math.hypot(s.punch[0], s.punch[1]); // the view holds its pattern position while firing and recovers afterwards
-    if (len > 0 && t > s.lastFire + (d.cycle ?? 0.1) + 0.05) { const nl = Math.max(len - (40 + len * 4) * dt, 0); s.punch = [s.punch[0] * (nl / len), s.punch[1] * (nl / len)]; }
-    // m_iShotsFired winds back one step per 22 ms, starting 0.4 s after the last shot, while the trigger is up
-    if (!s.held && s.wasHeld && s.shots > 0) { s.shots = d.accuracy.kind === 'shots' ? Math.min(s.shots, 15) : 0; s.decayAt = t + 0.4; }
-    if (!s.held && s.shots > 0 && t > s.decayAt) { // catch up if the frame was long
-      const steps = Math.min(s.shots, Math.floor((t - s.decayAt) / 0.0225) + 1);
-      s.shots -= steps; s.decayAt += steps * 0.0225;
+    // CS2 exponential recoil & tap recovery (no 400 ms stall between taps)
+    const len = Math.hypot(s.punch[0], s.punch[1]);
+    if (len > 0 && t > s.lastFire + (!s.held || !d.auto ? 0.045 : (d.cycle ?? 0.1) + 0.03)) {
+      const nl = Math.max(len * Math.exp(-8 * dt) - 2.5 * dt, 0);
+      s.punch = [s.punch[0] * (nl / len), s.punch[1] * (nl / len)];
+    }
+    s.kick *= Math.exp(-20 * dt);
+    if (!s.held && s.wasHeld && s.shots > 0) { s.shots = d.accuracy.kind === 'shots' ? Math.min(s.shots, 18) : 0; s.decayAt = t + (d.cycle ?? 0.1) + 0.03; }
+    if (!s.held && s.shots > 0 && t > s.decayAt) {
+      const steps = Math.min(s.shots, Math.floor((t - s.decayAt) / 0.028) + 1);
+      s.shots -= steps; s.decayAt += steps * 0.028;
     }
     stepFx(dt); stepShards(dt);
-    hud.setSpread(Math.tan((crosshairDeg() * Math.PI) / 180), fov(73.74)); // fov(): the zoom-aware vertical fov (73.74 = CS:S 90 at 4:3)
 
     if (uiOpen()) {
       s.held = false;
@@ -719,6 +745,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     if (s.planting && t - s.clickAt > 0.42) { play(d.sounds.click, 0.6); s.clickAt = t; } // typing the code
     if (s.resumeZoom && t >= s.nextFire && !s.reload) { setZoom(s.resumeZoom); s.resumeZoom = 0; }
     trigger(t);
+    hud.setSpread(Math.tan((crosshairDeg() * Math.PI) / 180), fov(73.74), [s.punch[0] * 0.55, s.punch[1] * 0.55]);
 
     // ---------- view model: baked animation + a little walk bob ----------
     const sp = Math.hypot(player.v[0], player.v[1]) / 250;
@@ -729,12 +756,12 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     const k = dt > 0 ? Math.min(1, dt * 14) : 0, lim = (v) => Math.max(-0.7, Math.min(0.7, v));
     s.swayX = (s.swayX ?? 0) + (lim(dt > 0 ? (dyaw / dt) * 0.05 : 0) - (s.swayX ?? 0)) * k;   // turning right: the gun trails left
     s.swayY = (s.swayY ?? 0) + (lim(dt > 0 ? (-dpitch / dt) * 0.04 : 0) - (s.swayY ?? 0)) * k; // looking up: it trails down
-    holder.position.set(Math.sin(s.bob) * 0.12 * bobAmt + s.swayX, Math.sin(s.bob * 2) * 0.1 * bobAmt + s.swayY, 0);
+    holder.position.set(Math.sin(s.bob) * 0.12 * bobAmt + s.swayX, Math.sin(s.bob * 2) * 0.1 * bobAmt + s.swayY, s.kick * 0.85);
     if (s.inspectEnd && t >= s.inspectEnd) s.inspectEnd = 0;
     const progress = s.inspectEnd ? 1 - (s.inspectEnd - t) / 1.65 : 0;
     const lift = Math.sin(progress * Math.PI);
     holder.position.x -= 2.5 * lift; holder.position.y += 1.8 * lift;
-    holder.rotation.set(-0.08 * lift, 0.13 * lift, (d.melee ? -0.44 : -0.26) * lift);
+    holder.rotation.set(-0.08 * lift + s.kick * 0.025, 0.13 * lift, (d.melee ? -0.44 : -0.26) * lift - s.kick * 0.015);
     holder.visible = !s.zoom;
     showFlash(s.cur, t, s.flashUntil, s.zoom);
   }

@@ -12,6 +12,7 @@ import { writeSky } from './sky.mjs';
 import { flatten, addSoundscapeScripts } from './soundscapes.mjs';
 import { makeWorld, trace as traceWorld } from '../public/physics.js';
 import { moverEntry } from '../public/movers.js';
+import { promoteMapWindows } from './promote-windows.mjs';
 
 const MAP = process.argv[2] || 'de_dust2';
 const ROOT = path.resolve(import.meta.dirname, '..', '..', 'content');
@@ -524,8 +525,9 @@ for (const e of moverEnts) {
     } else { def.dist = Number(e.distance ?? 90); def.speed = Number(e.speed ?? 100); def.oneWay = !prop && flags & 16 ? (flags & 2 ? -1 : 1) : 0; }
     surface = /metal/.test(e.model) ? 'metal' : 'wood';
   } else {
-    def.kind = 'break'; def.breakable = true; def.health = e.classname === 'func_breakable_surf' ? 1 : Number(e.health);
+    def.kind = 'break'; def.breakable = true;
     def.glass = e.classname === 'func_breakable_surf' || Number(e.material ?? 0) === 0;
+    def.health = def.glass ? 1 : Number(e.health);
     surface = def.glass ? 'glass' : ['glass', 'wood', 'metal', 'concrete', 'concrete', 'concrete', 'concrete', 'concrete'][Number(e.material)] ?? 'wood';
   }
   def.surface = surface;
@@ -700,6 +702,8 @@ fs.writeFileSync(path.join(OUT, 'world.json'), JSON.stringify({ sites, hostages,
   overview: OVERVIEWS[MAP] ?? null,
   mode: argOf('--mode') === 'wingman' ? { name: 'Wingman', teamSize: 2, roundTime: 90, sites: 1 } : null, // --mode wingman: 2v2, 90 s rounds, one bombsite
 }));
+const winRes = promoteMapWindows(MAP);
+if (winRes.addedMovers || winRes.hpFixed) console.log(`windows: promoted ${winRes.addedMovers} panes, normalized ${winRes.hpFixed} HP -> ${winRes.totalBreakables} breakables`);
 console.log(`displacement brushes replaced by triangle collision: ${DISPBRUSH}`);
 console.log(`models turned to fit their hull: ${aligned}`);
 console.log(`props: ${propCount} placed, ${propManifest.length} materials, sky: ${skyManifest.length} materials + ${skyPropManifest.length} prop materials`);

@@ -162,9 +162,13 @@ export function createHud({ player, overview, getBots, getTeam, getBomb = () => 
 
   // ---------- crosshair: gap follows the weapon's current spread (cl_dynamiccrosshair) ----------
   // the crosshair gap is the real bullet spread on screen: tan(spread) over tan(half the vertical fov), in pixels
-  function setSpread(spreadTan, vfovDeg) {
-    const px = (spreadTan / Math.tan((vfovDeg * Math.PI) / 360)) * (innerHeight / 2);
+  function setSpread(spreadTan, vfovDeg, recoil) {
+    const tanHalf = Math.tan((vfovDeg * Math.PI) / 360), halfH = innerHeight / 2;
+    const px = (spreadTan / tanHalf) * halfH;
     cross.style.setProperty('--gap', Math.min(xh.gap + (xh.dynamic ? px : 0), 90).toFixed(1) + 'px');
+    const rx = xh.followRecoil && recoil ? -(Math.tan((recoil[1] * Math.PI) / 180) / tanHalf) * halfH : 0;
+    const ry = xh.followRecoil && recoil ? -(Math.tan((recoil[0] * Math.PI) / 180) / tanHalf) * halfH : 0;
+    cross.style.transform = rx || ry ? `translate(${rx.toFixed(1)}px,${ry.toFixed(1)}px)` : '';
   }
   // crosshair look (devpanel.js): colour, alpha, length, thickness, gap, black outline, centre dot; dynamic = the gap follows the spread
   let xh = { gap: 3, dynamic: true };

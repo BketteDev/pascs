@@ -3,7 +3,7 @@
 // Tuning changes this client only (recoil, spread, fire rate as you feel it); damage and rate-of-fire checks stay the server's.
 import { WEAPONS } from './weapon-defs.js';
 
-const XH_DEFAULT = { color: '#32fa32', alpha: 1, length: 6, thickness: 2, gap: 3, outline: 0, dot: false, dynamic: true };
+const XH_DEFAULT = { color: '#32fa32', alpha: 1, length: 6, thickness: 2, gap: 3, outline: 0, dot: false, dynamic: true, followRecoil: false };
 const ORIGINAL = structuredClone(WEAPONS);
 const load = (k, fallback) => { try { return JSON.parse(localStorage.getItem(k)) ?? fallback; } catch { return fallback; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked: settings last this session */ } };
@@ -21,6 +21,7 @@ export function createDevPanel({ hud, weapons, range }) {
     ${slider('alpha', 'Alpha', 0.1, 1, 0.05)}${slider('length', 'Length', 0, 20, 1)}${slider('thickness', 'Thickness', 1, 6, 1)}${slider('gap', 'Gap', -4, 20, 1)}${slider('outline', 'Outline', 0, 2, 1)}
     <label>Centre dot <input type="checkbox" data-k="dot"></label>
     <label>Dynamic (gap follows the spread) <input type="checkbox" data-k="dynamic"></label>
+    <label>Follow recoil (crosshair tracks spray) <input type="checkbox" data-k="followRecoil"></label>
     <button data-a="xhreset">Default crosshair</button>
     <h3>Debug</h3>
     <label>Show recoil / accuracy / stats readout <input type="checkbox" id="dbgshow"></label>

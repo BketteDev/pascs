@@ -319,6 +319,10 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     Object.assign(g6.round, { phase: 'over', left: 0 });
     await sleep(200);
     assert(fake.last.mv.every((v) => v === 0), 'a new round closes doors and restores glass');
+    assert(standBefore(movers[pane].center), 'room to knife restored window');
+    fake.handlers.message(JSON.stringify({ t: 'fire', w: 'knife', to: movers[pane].center }));
+    await sleep(100);
+    assert(fake.last.mv[pane] === 1, 'knife slash broke the restored pane');
     console.log('doors + glass ok:', movers.filter((m) => m.kind === 'door').length, 'doors,', movers.filter((m) => m.breakable).length, 'breakables');
     g6.stop();
   }

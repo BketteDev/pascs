@@ -581,7 +581,7 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   players.update(now / 1000, player.eye);
   hud.update();
   touch?.update();
-  const punch = weapons.punch(), VIEW_KICK = 0.25, yaw = player.yaw + punch[1] * rad * VIEW_KICK, pitch = player.pitch + punch[0] * rad * VIEW_KICK; // the camera only shows a hint of the recoil; bullets still follow the full spray pattern
+  const punch = weapons.punch(), VIEW_KICK = 0.45, yaw = player.yaw + punch[1] * rad * VIEW_KICK, pitch = player.pitch + punch[0] * rad * VIEW_KICK; // CS2 view_recoil_tracking: camera tracks 45% of spray punch
   const vfov = weapons.fov(FOV);
   for (const c of [camera, skyCamera]) if (c.fov !== vfov) { c.fov = vfov; c.updateProjectionMatrix(); }
   let e = player.eyeAt(acc / TICK), cp = Math.cos(pitch);
