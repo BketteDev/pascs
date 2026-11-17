@@ -16,7 +16,7 @@ function index() {
   vpk = openVpk(VPK); byBase = new Map();
   for (const k of vpk.entries.keys()) {
     if (!k.startsWith('materials/') || !k.endsWith('.vtex_c')) continue;
-    const m = k.match(/([^/]+?)_(color|c|diffuse|albedo)(?:_[a-z]+)?_[0-9a-f]{8}\.vtex_c$/);
+    const m = k.match(/([^/]+?)_(color|c|diffuse|albedo)(?:_[a-z]+)?_[0-9a-f]{6,8}\.vtex_c$/);
     if (m) (byBase.get(m[1]) ?? byBase.set(m[1], []).get(m[1])).push(k);
   }
 }
@@ -74,7 +74,16 @@ function dds({ w, h, fmt, data }) {
 /** Candidate vtex paths for a legacy material name: same folder first, then any folder; "inf" prefixes are optional. */
 export function cs2Find(name) {
   index();
-  const n = name.toLowerCase().replace(/^maps\/[^/]+\//, '').replace(/_-?\d+_-?\d+_-?\d+$/, ''), base = n.split('/').pop(), dir = n.includes('/') ? n.slice(0, n.lastIndexOf('/')) : '';
+  const n = name.trim().toLowerCase().replace(/^maps\/[^/]+\//, '').replace(/_-?\d+_-?\d+_-?\d+$/, '');
+  for (const cand of [`materials/${n}.vmat_c`, `materials/${n}_.vmat_c`]) {
+    if (!vpk.entries.has(cand)) continue;
+    const strs = vpk.read(cand).toString('latin1').match(/materials\/[a-z0-9_\/\-]+\.vtex/gi) ?? [];
+    const pick = strs.find((s) => /_(color|c|diffuse|albedo)(?:_[a-z]+)?_[0-9a-f]+\.vtex$/i.test(s) && !/default/i.test(s))
+      ?? strs.find((s) => !/normal|ao|mask|rough|metal|height|tint|selfillum|detail|trans|default/i.test(s));
+    const vtex = pick && pick.toLowerCase() + '_c';
+    if (vtex && vpk.entries.has(vtex)) return vtex;
+  }
+  const base = n.split('/').pop(), dir = n.includes('/') ? n.slice(0, n.lastIndexOf('/')) : '';
   const list = byBase.get(base) ?? byBase.get(base.replace(/^inf/, '')) ?? [];
   return list.slice().sort((a, b) => (b.startsWith('materials/' + dir + '/') ? 1 : 0) - (a.startsWith('materials/' + dir + '/') ? 1 : 0))[0] ?? null;
 }

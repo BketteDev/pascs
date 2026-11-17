@@ -5,6 +5,10 @@ export const AGENT_NAMES = {
 };
 export const MAP_AGENTS = {
   de_dust2: { ct: ['ct_sas', 'ct_gsg9'], t: ['t_leet', 't_guerilla'] },
+  de_mirage: { ct: ['ct_sas', 'ct_gsg9'], t: ['t_leet', 't_guerilla'] },
+  de_shortdust: { ct: ['ct_sas', 'ct_gsg9'], t: ['t_leet', 't_guerilla'] },
+  de_overpass: { ct: ['ct_gsg9', 'ct_urban'], t: ['t_phoenix', 't_guerilla'] },
+  de_bank: { ct: ['ct_urban', 'ct_gsg9'], t: ['t_phoenix', 't_leet'] },
   de_dust: { ct: ['ct_urban', 'ct_gign'], t: ['t_guerilla', 't_arctic'] },
   de_inferno: { ct: ['ct_gign', 'ct_urban'], t: ['t_phoenix', 't_arctic'] },
   de_lake: { ct: ['ct_gign', 'ct_urban'], t: ['t_phoenix', 't_arctic'] },

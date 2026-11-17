@@ -270,6 +270,10 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   };
   function updateMovers() {
     movers.defs.forEach((d, i) => {
+      if (d.breakable && d.glass && !movers.state[i] && round.phase === 'live') {
+        const bot = [...ents.values()].find((e) => e.bot && !e.hostage && e.alive && Math.hypot(e.p.o[0] - d.center[0], e.p.o[1] - d.center[1]) < 48 && Math.abs(e.p.o[2] + 36 - d.center[2]) < 56);
+        if (bot) { moverHp[i] = 0; movers.apply(i, 1); emit({ e: 'break', i, glass: 1, o: d.center.map(r2) }); } // bots smash through glass panes blocking them
+      }
       if (d.kind !== 'door' || d.locked) return;
       const c = doorCenter(i), near = (r) => [...ents.values()].find((e) => e.alive && Math.hypot(e.p.o[0] - c[0], e.p.o[1] - c[1]) < r && Math.abs(e.p.o[2] + 36 - c[2]) < 96);
       if (!d.use) { // map-logic doors: open for whoever comes close, close once everyone has gone

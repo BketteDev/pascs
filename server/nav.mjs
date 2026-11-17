@@ -20,11 +20,11 @@ export function loadOrBuildNav(world, spawns, mapDir) {
 // the floor under (x, y) near height z: the hull is dropped from `up` above (to climb steps); under a doorway that start is inside the
 // frame, so lower starts are tried before giving up
 const floorAt = (world, x, y, z, up = 46, down = MAX_DROP + 2) => {
-  for (const u of [up, 20, 2]) {
+  for (const u of [up, 20, 12, 8, 6, 2, -14, -36]) {
     if (u > up) continue;
     const r = trace(world, [x, y, z + u], [x, y, z - down], MINS, MAXS);
     if (r.startSolid) continue;
-    return r.fraction < 1 && r.normal && r.normal[2] >= 0.7 ? [x, y, r.end[2]] : null;
+    if (r.fraction < 1 && r.normal && r.normal[2] >= 0.7) return [x, y, r.end[2]];
   }
   return null;
 };
@@ -34,7 +34,12 @@ function build(world, spawns) {
   const nodes = [], ids = new Map(), edges = [];
   const add = (o) => { const k = key(...o); if (ids.has(k)) return ids.get(k); ids.set(k, nodes.length); nodes.push({ o }); edges.push([]); return nodes.length - 1; };
   const queue = [];
-  for (const s of spawns) { const o = floorAt(world, s.o[0], s.o[1], s.o[2], 8, 200) ?? floorAt(world, s.o[0], s.o[1], s.o[2], 60, 200) ?? floorAt(world, s.o[0], s.o[1], s.o[2], 130, 300); if (o) queue.push(add(o)); }
+  for (const s of spawns) {
+    const gx = Math.round(s.o[0] / STEP) * STEP, gy = Math.round(s.o[1] / STEP) * STEP;
+    const o = floorAt(world, gx, gy, s.o[2], 8, 200) ?? floorAt(world, gx, gy, s.o[2], 60, 200)
+      ?? floorAt(world, s.o[0], s.o[1], s.o[2], 8, 200) ?? floorAt(world, s.o[0], s.o[1], s.o[2], 60, 200) ?? floorAt(world, s.o[0], s.o[1], s.o[2], 130, 300);
+    if (o) queue.push(add(o));
+  }
   for (let qi = 0; qi < queue.length && nodes.length < MAX_NODES; qi++) {
     const a = queue[qi], [x, y, z] = nodes[a].o;
     for (const [dx, dy] of DIRS) {
@@ -43,7 +48,13 @@ function build(world, spawns) {
       const rise = t[2] - z;
       if (rise > MAX_JUMP_UP) continue;
       const hz = Math.max(z, t[2]) + 8; // sweep the hull across just above the higher floor (rough terrain has small bumps)
-      const sweep = trace(world, [x, y, hz], [t[0], t[1], hz], MINS, MAXS);
+      let sweep = trace(world, [x, y, hz], [t[0], t[1], hz], MINS, MAXS);
+      if ((sweep.startSolid || sweep.fraction < 1) && Math.abs(rise) <= 36) {
+        for (const dz of [2, 12, MAX_STEP_UP]) {
+          sweep = trace(world, [x, y, Math.min(z + dz, t[2] + 6)], [t[0], t[1], t[2] + 2], MINS, MAXS); // sloped stairs / ramps under low doorway headers
+          if (!sweep.startSolid && sweep.fraction >= 1) break;
+        }
+      }
       if (sweep.startSolid || sweep.fraction < 1) continue;
       const before = ids.size, b = add(t);
       if (ids.size > before) queue.push(b);
