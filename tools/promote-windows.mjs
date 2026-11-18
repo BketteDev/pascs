@@ -286,7 +286,7 @@ export function promoteMapWindows(mapName, { dryRun = false } = {}) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dryRun = process.argv.includes('--dry-run');
   const args = process.argv.slice(2).filter((a) => a !== '--dry-run');
-  const maps = !args.length || args[0] === 'all' ? ['de_dust2', 'de_lake', 'cs_office', 'de_inferno', 'de_nuke', 'cs_agency', 'de_mirage', 'de_overpass', 'de_shortdust', 'de_bank'] : args;
+  const maps = !args.length || args[0] === 'all' ? ['de_dust2', 'de_lake', 'cs_office', 'de_inferno', 'de_nuke', 'cs_agency', 'de_mirage', 'de_overpass', 'de_shortdust', 'de_bank', 'cs_italy', 'de_shortnuke'] : args;
   for (const m of maps) {
     const res = promoteMapWindows(m, { dryRun });
     console.log(`${dryRun ? '[DRY] ' : ''}${res.mapName}: hpFixed=${res.hpFixed}, addedMovers=${res.addedMovers}, totalBreakables=${res.totalBreakables}, entries=${res.addedEntries.slice(0, 12).join(',')}${res.addedEntries.length > 12 ? ` (+${res.addedEntries.length - 12})` : ''}`);

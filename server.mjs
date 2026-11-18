@@ -27,10 +27,10 @@ const indexHeaders = {
 };
 
 const server = http.createServer((req, res) => {
-  const url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (url === '/api/maps') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(builtMaps()));
+  const reqUrl = new URL(req.url, 'http://x'), url = decodeURIComponent(reqUrl.pathname);
+  if (url === '/api/maps') { const list = builtMaps().sort(); return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(reqUrl.searchParams.has('grouped') ? { css: list.filter((m) => mapGame(m) === 'css'), csgo: list.filter((m) => mapGame(m) === 'csgo') } : list)); }
   if (url === '/api/admin' && req.method === 'POST') return admin(req, res);
-  if (url === '/api/info') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ map: config.map, mode: config.mode ?? 'classic', teamSize: game.teamSize, maxPlayers: game.maxPlayers }));
+  if (url === '/api/info') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ map: config.map, game: mapGame(config.map), mode: config.mode ?? 'classic', teamSize: game.teamSize, maxPlayers: game.maxPlayers }));
   if (url === '/' || url === '/index.html') {
     if (req.headers['if-none-match'] === indexHeaders.ETag) return res.writeHead(304, indexHeaders).end();
     const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
@@ -85,6 +85,8 @@ if (process.env.MAP) config.map = process.env.MAP;
 if (process.env.TEAM_SIZE) config.teamSize = Number(process.env.TEAM_SIZE);
 if (process.env.ADMIN_PASSWORD) config.adminPassword = process.env.ADMIN_PASSWORD;
 if (process.env.MODE) config.mode = process.env.MODE; // 'range': shooting range (target bots, no rounds)
+const CSS_MAPS = new Set(['de_dust2', 'de_inferno', 'cs_office', 'de_nuke']);
+const mapGame = (m) => CSS_MAPS.has(m) ? 'css' : 'csgo';
 const builtMaps = () => fs.readdirSync(path.join(pub, 'maps')).filter((m) => fs.existsSync(path.join(pub, 'maps', m, 'world.json')));
 if (!builtMaps().includes(config.map)) { console.error(`map "${config.map}" is not built: public/maps/${config.map}/world.json is missing (npm run build)`); process.exit(1); }
 const wss = new WebSocketServer({ server, path: '/game' });

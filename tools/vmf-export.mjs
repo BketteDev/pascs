@@ -112,6 +112,7 @@ function bucket(name, ref) {
   return parts.get(name);
 }
 function emitTri(b, tri, uvAxes) {
+  if (len(cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))) < 1e-3) return;
   for (const p of tri) {
     b.pos.push(...p);
     if (uvAxes) {
@@ -156,7 +157,9 @@ function emitSolid(solid) {
   const sides = parseSides(solid);
   if (sides.length < 4) return;
   brushCount++;
+  const hasDisp = sides.some((x) => x.disp); // VBSP discards every non-displacement face on a displacement brush
   sides.forEach((side, i) => {
+    if (hasDisp && !side.disp) { skipped++; return; }
     if (SKIP.test(side.material) || !side.material) { skipped++; return; }
     const poly = sidePolygon(sides, i);
     if (poly.length < 3) return;
@@ -173,14 +176,44 @@ const rotation = ([pitch, yaw, roll]) => {
   return [[cp * cy, sr * sp * cy - cr * sy, cr * sp * cy + sr * sy], [cp * sy, sr * sp * sy + cr * cy, cr * sp * sy - sr * cy], [-sp, sr * cp, cr * cp]];
 };
 const applyM = (M, v) => M.map((r) => r[0] * v[0] + r[1] * v[1] + r[2] * v[2]);
+// shortcut: CS:GO props missing from local CS:S content map to hull-matched Source 1 equivalents when available; remove if CS:GO .mdl pack is added
+const PROP_SUBS = {
+  'models/props_vehicles/van.mdl': 'models/props/cs_militia/van.mdl',
+  'models/props_vehicles/van001a.mdl': 'models/props/cs_militia/van.mdl',
+  'models/props_vehicles/van_glass.mdl': 'models/props/cs_militia/van_glass.mdl',
+  'models/props/de_house/swat_van.mdl': 'models/props/cs_militia/van.mdl',
+  'models/props/de_house/swat_van_generic.mdl': 'models/props/cs_militia/van.mdl',
+  'models/props/props_crates/wooden_crate_64x64.mdl': 'models/props/de_nuke/crate_small.mdl',
+  'models/props/props_crates/wooden_crate_32x64.mdl': 'models/props/cs_militia/crate_extrasmallmill.mdl',
+  'models/props/props_crates/wooden_crate_32x64_side.mdl': 'models/props/cs_militia/crate_extrasmallmill.mdl',
+  'models/props/de_dust/hr_dust/dust_crates/dust_crate_style_02_32x32x32.mdl': 'models/props/cs_militia/crate_extrasmallmill.mdl',
+  'models/props/de_dust/dust_rusty_barrel.mdl': 'models/props_c17/oildrum001.mdl',
+  'models/props/de_vertigo/pallet_01.mdl': 'models/props_junk/wood_pallet001a.mdl',
+  'models/props/de_dust/pallet02.mdl': 'models/props_junk/wood_pallet001a.mdl',
+  'models/props/de_mirage/bench_a.mdl': 'models/props/de_inferno/bench_wood.mdl',
+  'models/props/de_inferno/bench_wood_new.mdl': 'models/props/de_inferno/bench_wood.mdl',
+  'models/props_urban/bench001.mdl': 'models/props/de_inferno/bench_concrete.mdl',
+};
+function resolveModelBase(model) {
+  if (model.endsWith('_glass.mdl') && !resolveModelBase(model.replace(/_glass\.mdl$/, '.mdl'))) return null;
+  const cand = [model, model.endsWith('_static.mdl') ? model.replace(/_static\.mdl$/, '.mdl') : null, PROP_SUBS[model]].filter(Boolean);
+  for (const c of cand) { const b = modelBase(c); if (b) return { resolved: c, base: b }; }
+  return null;
+}
 const models = new Map();
 let propsPlaced = 0; const propsMissing = new Set();
 function emitProp(ent) {
   const model = (ent.props.get('model') ?? '').replace(/\\/g, '/').toLowerCase();
-  if (!model.endsWith('.mdl')) return;
-  if (!models.has(model)) { try { models.set(model, loadModel(modelBase(model), Number(ent.props.get('skin') ?? 0))); } catch { models.set(model, null); } }
-  const m = models.get(model);
-  if (!m) { propsMissing.add(model); return; }
+  if (!model.endsWith('.mdl')) return null;
+  const skin = Number(ent.props.get('skin') ?? 0), key = `${model}#${skin}`;
+  if (!models.has(key)) {
+    const res = resolveModelBase(model);
+    if (!res) models.set(key, null);
+    else { try { models.set(key, { m: loadModel(res.base, skin), ...res }); } catch { models.set(key, null); } }
+  }
+  const hit = models.get(key);
+  if (!hit) { propsMissing.add(model); return null; }
+  const { m, base, resolved } = hit;
   propsPlaced++;
   const o = nums(ent.props.get('origin') ?? '0 0 0'), M = rotation(nums(ent.props.get('angles') ?? '0 0 0'));
   for (const mesh of m.meshes) {
@@ -191,10 +224,11 @@ function emitProp(ent) {
     for (let i = 0; i < mesh.pos.length; i += 3) b.pos.push(...add(applyM(M, mesh.pos.slice(i, i + 3)), o));
     b.uv.push(...mesh.uv);
   }
+  return { m, model: resolved, rawModel: model, base, o, M, solid: Number(ent.props.get('solid') ?? 6) };
 }
 
 // ---------- main ----------
-export { parseVmf, parseSides, sidePolygon, emitSolid, emitProp, parts, SKIP };
+export { parseVmf, parseSides, sidePolygon, emitSolid, emitProp, resolveModelBase, parts, SKIP };
 if (path.resolve(process.argv[1] ?? '') === path.resolve(import.meta.filename)) {
 const [vmfFile, outFile] = process.argv.slice(2);
 if (!vmfFile || !outFile) { console.log('usage: node tools/vmf-export.mjs <map.vmf> <out.glb>'); process.exit(1); }

@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseVmf, parseSides, sidePolygon, emitSolid, emitProp, parts } from './vmf-export.mjs';
+import { loadPhy } from './mdl.mjs';
 import { png, vtfToRgba } from './vtf.mjs';
 import { cs2Texture } from './cs2tex.mjs';
 import { addBspPak, CSGO, readGameFile } from './content.mjs';
@@ -60,32 +61,99 @@ const skyBounds = (() => {
 })();
 const inSky = (c) => skyBounds && c[0] >= skyBounds.lo[0] && c[0] <= skyBounds.hi[0] && c[1] >= skyBounds.lo[1] && c[1] <= skyBounds.hi[1] && c[2] >= skyBounds.lo[2] && c[2] <= skyBounds.hi[2];
 for (let i = solids.length - 1; i >= 0; i--) if (inSky(solidCentre(solids[i].s))) solids.splice(i, 1);
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const applyM3 = (M, v) => M.map((r) => r[0] * v[0] + r[1] * v[1] + r[2] * v[2]);
+const bounds3 = (pts) => [0, 1, 2].map((a) => Math.min(...pts.map((p) => p[a]))).concat([0, 1, 2].map((a) => Math.max(...pts.map((p) => p[a]))));
+// Same VBSP Minkowski bevel planes as build.mjs so box sweeps don't snag or protrude on angled corners.
+function convexEntry(points, facePlanes, edgeList) {
+  const planes = [...facePlanes];
+  const add = (n, pts) => {
+    const l = Math.hypot(...n); if (l < 1e-4) return;
+    const u = n.map((v) => v / l), d = pts.map((p) => dot3(u, p));
+    planes.push([...u, Math.max(...d)], [...u.map((v) => -v), -Math.min(...d)]);
+  };
+  for (const ax of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
+    add(ax, points);
+    for (const [p, q] of edgeList) add(cross3(sub3(q, p), ax), points);
+  }
+  const seen = new Set(), flat = [];
+  for (const pl of planes) { const k = pl.map((v) => Math.round(v * 500)).join(','); if (!seen.has(k)) { seen.add(k); flat.push(...pl); } }
+  return [...bounds3(points), ...flat];
+}
+const phyCache = new Map();
+const getPhy = (base) => {
+  if (!phyCache.has(base)) {
+    let p = null;
+    if (fs.existsSync(base + '.phy')) { try { p = loadPhy(base + '.phy'); } catch { p = null; } }
+    phyCache.set(base, p);
+  }
+  return phyCache.get(base);
+};
 const dispTris = new Map(); // displacement brushes: their collision is the displaced triangles, not the flat brush
 for (const { s } of solids) {
-  const hasDisp = parseSides(s).some((x) => x.disp), before = hasDisp ? new Map([...parts].map(([k, v]) => [k, v.pos.length])) : null;
+  const sd = parseSides(s), dispSide = sd.find((x) => x.disp);
+  const before = dispSide ? new Map([...parts].map(([k, v]) => [k, v.pos.length])) : null;
   emitSolid(s);
-  if (hasDisp) {
+  if (dispSide) {
     const tris = [];
     for (const [k, v] of parts) for (let i = before.get(k) ?? 0; i < v.pos.length; i += 9) tris.push(v.pos.slice(i, i + 9).map((c) => Math.round(c * 10) / 10));
-    dispTris.set(s, tris);
+    dispTris.set(s, { tris, mat: dispSide.material ?? '' });
   }
 }
-for (const e of ents) if (/^prop_(static|dynamic|physics|detail)/.test(cls(e)) && !inSky(vec(e.props.get('origin')))) emitProp(e);
 
-// ---------- collision brushes ----------
+// ---------- collision brushes + placed props ----------
 const collision = [], playerOnly = [], skyBrushIdx = [], surfOf = [];
-const surfaceOf = (m) => SURFACES.indexOf(/glass|window/.test(m) ? 'glass' : /wood/.test(m) ? 'wood' : /grass|blendgrass/.test(m) ? 'grass' : /sand/.test(m) ? 'sand' : /dirt|mud|gravel|nature/.test(m) ? 'gravel' : /metal/.test(m) ? 'metal' : /tile/.test(m) ? 'tile' : 'concrete');
+const surfaceOf = (m) => SURFACES.indexOf(/glass|window/.test(m) ? 'glass' : /wood|crate|plank|barrel/.test(m) ? 'wood' : /grass|blendgrass/.test(m) ? 'grass' : /sand/.test(m) ? 'sand' : /dirt|mud|gravel|nature/.test(m) ? 'gravel' : /metal/.test(m) ? 'metal' : /tile/.test(m) ? 'tile' : 'concrete');
 const footprints = [];
-let skippedBrushes = 0;
+let skippedBrushes = 0, propCols = 0;
+for (const e of ents) {
+  if (!/^prop_(static|dynamic|physics|detail)/.test(cls(e)) || inSky(vec(e.props.get('origin')))) continue;
+  const placed = emitProp(e);
+  if (!placed || !placed.solid) continue;
+  const { m, model, base, o, M, solid } = placed;
+  const place = (pts) => pts.map((q) => applyM3(M, q).map((v, k) => v + o[k]));
+  const phy = solid === 6 ? getPhy(base) : null;
+  const surf = surfaceOf(model);
+  if (phy?.length) {
+    for (const piece of phy) {
+      if (piece.points.length < 4) continue;
+      const faces = piece.planes.map(([nx, ny, nz, d]) => { const n = applyM3(M, [nx, ny, nz]); return [...n, d + dot3(n, o)]; });
+      collision.push(convexEntry(place(piece.points), faces, piece.edges.map(([p, q]) => place([p, q])))); surfOf.push(surf); propCols++;
+    }
+  } else if (solid >= 2 && solid <= 4) {
+    const l = m.hullMin, h = m.hullMax;
+    const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((c) => [c & 1 ? h[0] : l[0], c & 2 ? h[1] : l[1], c & 4 ? h[2] : l[2]]);
+    const edgePairs = []; for (let i = 0; i < 8; i++) for (let k = 0; k < 3; k++) if (!((i >> k) & 1)) edgePairs.push([corners[i], corners[i | (1 << k)]]);
+    const faces = []; for (let a = 0; a < 3; a++) for (const sgn of [1, -1]) { const ax = [0, 0, 0]; ax[a] = sgn; const n = applyM3(M, ax); faces.push([...n, dot3(n, place([corners.find((c) => c[a] === (sgn > 0 ? h[a] : l[a]))])[0])]); }
+    collision.push(convexEntry(place(corners), faces, edgePairs.map(([p, q]) => place([p, q])))); surfOf.push(surf); propCols++;
+  }
+}
 for (const { s, noCol } of solids) {
   if (noCol) continue;
-  if (dispTris.has(s)) { for (const t of dispTris.get(s)) { collision.push([Math.min(t[0], t[3], t[6]), Math.min(t[1], t[4], t[7]), Math.min(t[2], t[5], t[8]), Math.max(t[0], t[3], t[6]), Math.max(t[1], t[4], t[7]), Math.max(t[2], t[5], t[8]), ...t]); surfOf.push(SURFACES.indexOf('gravel')); } continue; }
-  const sides = parseSides(s), mats = sides.map((x) => x.material ?? '');
-  if (mats.some((m) => /toolsblockbullets|toolsskip|toolshint|toolsinvisible|toolstrigger|water/.test(m)) && !mats.some((m) => /toolsplayerclip|toolsclip|toolsskybox/.test(m)) && mats.every((m) => /^tools\/|water/.test(m))) { skippedBrushes++; continue; }
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  sides.forEach((_, i) => { for (const p of sidePolygon(sides, i) ?? []) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], p[a]); hi[a] = Math.max(hi[a], p[a]); } });
-  if (!Number.isFinite(lo[0])) continue;
-  const entry = [...lo, ...hi]; for (const sd of sides) entry.push(sd.n[0], sd.n[1], sd.n[2], sd.d);
+  if (dispTris.has(s)) {
+    const { tris, mat } = dispTris.get(s), surf = surfaceOf(mat);
+    for (const t of tris) {
+      const a = [t[0], t[1], t[2]], b = [t[3], t[4], t[5]], c = [t[6], t[7], t[8]];
+      if (Math.hypot(...cross3(sub3(b, a), sub3(c, a))) < 1e-3) continue;
+      collision.push([Math.min(t[0], t[3], t[6]) - 16, Math.min(t[1], t[4], t[7]) - 16, Math.min(t[2], t[5], t[8]) - 16, Math.max(t[0], t[3], t[6]) + 16, Math.max(t[1], t[4], t[7]) + 16, Math.max(t[2], t[5], t[8]) + 16, ...t]);
+      surfOf.push(surf);
+    }
+    continue;
+  }
+  const sd = parseSides(s), mats = sd.map((x) => x.material ?? '');
+  if (sd.some((x) => x.n.some((v) => !Number.isFinite(v)))) continue;
+  const allToolOrLiquid = mats.every((m) => !m || /^(?:tools\/|liquids\/|toolsnodraw)/.test(m) || /water/.test(m));
+  if (allToolOrLiquid && !mats.some((m) => /toolsplayerclip|toolsclip|toolsskybox|toolsblack|toolswhite/.test(m))) { skippedBrushes++; continue; }
+  const pts = [], edgeList = [], facePlanes = sd.map((x) => [...x.n, x.d]);
+  for (let i = 0; i < sd.length; i++) {
+    const poly = sidePolygon(sd, i);
+    if (!poly || poly.length < 3) continue;
+    for (let k = 0; k < poly.length; k++) { pts.push(poly[k]); edgeList.push([poly[k], poly[(k + 1) % poly.length]]); }
+  }
+  if (pts.length < 4) continue;
+  const entry = convexEntry(pts, facePlanes, edgeList), lo = entry.slice(0, 3), hi = entry.slice(3, 6);
   if (mats.some((m) => /toolsplayerclip|toolsclip/.test(m))) { playerOnly.push(entry); continue; }
   if (mats.some((m) => /toolsskybox/.test(m))) skyBrushIdx.push(collision.length);
   else footprints.push({ lo, hi });
@@ -96,30 +164,58 @@ for (const { s, noCol } of solids) {
 const hash = (name) => { let h = 2166136261; for (const c of name) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; };
 const vtfCache = new Map();
 const readVtf = (file) => {
-  if (!vtfCache.has(file)) { try { const { W, H, rgba } = vtfToRgba(fs.readFileSync(file)); const rgb = Buffer.alloc(W * H * 3); for (let i = 0; i < W * H; i++) rgba.copy(rgb, i * 3, i * 4, i * 4 + 3); vtfCache.set(file, { png: png(W, H, 3, rgb), w: W, h: H }); } catch { vtfCache.set(file, null); } }
+  if (!vtfCache.has(file)) {
+    try {
+      const { W, H, rgba } = vtfToRgba(fs.readFileSync(file));
+      let hasAlpha = false;
+      const rgb = Buffer.alloc(W * H * 3);
+      for (let i = 0; i < W * H; i++) { rgba.copy(rgb, i * 3, i * 4, i * 4 + 3); if (rgba[i * 4 + 3] < 245) hasAlpha = true; }
+      vtfCache.set(file, { png: png(W, H, 3, rgb), w: W, h: H, hasAlpha });
+    } catch { vtfCache.set(file, null); }
+  }
   return vtfCache.get(file);
+};
+const SEE_THROUGH = /tree|leaf|fence|gate|grate|wire|vine|foliage|plant|bush|shrub|fern|ivy|grass|weed|chainlink|rail|truss|grill|net/;
+const gridPng = (rgbaA, rgbaB, fn) => {
+  const N = 16, px = Buffer.alloc(N * N * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) px.set(fn(x, y, N) ? rgbaA : rgbaB, (y * N + x) * 4);
+  return { png: png(N, N, 4, px), w: 512, h: 512, alpha: 'MASK', stand: false };
 };
 const FLAT = [[/(?:^|\/)liquids\/|\bwater\b|water_/, [60, 105, 125, 170]], [/(?:^|\/)glass\/|glasswindow/, [150, 185, 200, 70]], [/bush|plant|shrub|foliage|tree|leaf|hedge|grass|nature|dirt|mud/, [78, 104, 58, 255]], [/wood/, [128, 96, 64, 255]], [/plaster|wallpaper/, [208, 190, 156, 255]], [/stone|brick|rock|cobble/, [150, 138, 120, 255]], [/metal/, [104, 106, 110, 255]], [/white\b/, [232, 228, 220, 255]], [/black\b/, [28, 28, 32, 255]], [/concrete/, [150, 148, 142, 255]]];
 function standIn(name) {
-  const clean = name.replace(/^prop:/, '').trim();
-  const cs2 = cs2Texture(clean); // the real texture from the Counter-Strike 2 install when it still ships it
+  const isProp = name.startsWith('prop:'), clean = name.replace(/^prop:/, '').trim();
+  let cs2 = cs2Texture(clean); // the real texture from the Counter-Strike 2 install when it still ships it
+  if (!cs2) {
+    try {
+      const vmt = readGameFile('materials/' + clean + '.vmt')?.toString('latin1').toLowerCase().replace(/\\/g, '/');
+      const vmtBase = vmt?.match(/"?\$basetexture"?\s+"?([^"\s]+)"?/)?.[1];
+      if (vmtBase) cs2 = cs2Texture(vmtBase);
+    } catch {}
+  }
   const isWater = /(?:^|\/)liquids\/|\bwater\b|water_/.test(clean);
   const isGlass = /(?:^|\/)glass\/|glasswindow/.test(clean);
   if (cs2 && (!isGlass || cs2.alpha > 0.02)) {
-    const alpha = cs2.alpha > 0.02 ? (isGlass ? 'BLEND' : /tree|leaf|fence|grate|wire|vine|foliage|plant|bush|grass|weed/.test(clean) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
+    const alpha = cs2.alpha > 0.02 ? (isGlass ? 'BLEND' : SEE_THROUGH.test(clean) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
     return { png: cs2.png, w: cs2.w, h: cs2.h, alpha, stand: true, real: true };
   }
   const base = clean.replace(/^maps\/[^/]+\//, '');
   const isFoliage = /bush|plant|shrub|foliage|tree|leaf|hedge|fern|ivy|vine/.test(base);
-  if (!isWater && !isGlass && !(isFoliage && clean !== base)) { // foliage alpha cards without a real CS2/CS:S texture shouldn't inherit opaque dirt VTFs
+  const isFence = /fence|gate|grate|chainlink|rail|truss|grill/.test(base);
+  if (isFence) return gridPng([82, 86, 90, 255], [0, 0, 0, 0], (x, y) => ((x + y) % 8 === 0) || ((x - y + 16) % 8 === 0));
+  if (isFoliage && (isProp || clean !== base)) return gridPng([74, 102, 52, 255], [0, 0, 0, 0], (x, y) => ((x * 5 + y * 3) % 7) < 3 && (x % 4 !== 0 || y % 4 !== 0));
+  if (!isWater && !isGlass && !isFoliage && !/decal|sign|poster|graffiti|overlay/.test(base)) {
     const dirs = [path.dirname(base)];
     for (let d = path.dirname(dirs[0]); d && d !== '.'; d = path.dirname(d)) dirs.push(d);
-    const cat = isFoliage ? 'nature' : /brick/.test(base) ? 'brick' : /stone|cobble|flagstone|rock/.test(base) ? 'stone' : /plaster|stucco|wallpaper/.test(base) ? 'plaster' : /wood|plywood|plank/.test(base) ? 'wood' : /metal|steel|iron|corrugated/.test(base) ? 'metal' : /tile|marble/.test(base) ? 'tile' : /concrete|asphalt|cinder|cement|floor/.test(base) ? 'concrete' : null;
+    const cat = /brick/.test(base) ? 'brick' : /stone|cobble|flagstone|rock/.test(base) ? 'stone' : /plaster|stucco|wallpaper/.test(base) ? 'plaster' : /wood|plywood|plank/.test(base) ? 'wood' : /metal|steel|iron|corrugated/.test(base) ? 'metal' : /tile|marble/.test(base) ? 'tile' : /nature|dirt|sand|mud|grass|ground/.test(base) ? 'nature' : /concrete|asphalt|cinder|cement|floor/.test(base) ? 'concrete' : null;
     if (cat && !dirs.includes(cat)) dirs.push(cat);
     for (const dir of dirs) {
+      if (dir === 'models' || dir.startsWith('models/')) continue; // prop UV sheets never tile cleanly on mismatched meshes
       try {
-        const files = fs.readdirSync(path.join(ROOT, dir)).filter((f) => f.endsWith('.vtf') && !/_(ref|normal|bump|n|mask)\.|^inf(sky|tree)|sky|tool|curbred|caution|hazard|parking|sign|decal|poster|graffiti|arrow/i.test(f)).sort();
-        for (let k = 0; k < Math.min(files.length, 6); k++) { const t = readVtf(path.join(ROOT, dir, files[(hash(name) + k) % files.length])); if (t) return { ...t, alpha: 'OPAQUE', stand: true }; }
+        const files = fs.readdirSync(path.join(ROOT, dir)).filter((f) => f.endsWith('.vtf') && !/_(ref|normal|bump|n|mask|height)\.|^inf(sky|tree)|^mil(?:ground|mountain|tree|barn|hole|roof|wndw|wall|beams|door)|^prod(?:grate|rail|vent|door)|sky|tool|curbred|caution|hazard|parking|sign|decal|poster|graffiti|arrow|grate|rail|fence|gate|hole|wndw|window|door|trim|steps|stairs|ibeam|truss|water/i.test(f)).sort();
+        for (let k = 0; k < files.length; k++) {
+          const t = readVtf(path.join(ROOT, dir, files[(hash(name) + k) % files.length]));
+          if (t && !t.hasAlpha && t.w >= 128 && t.h >= 128 && t.w <= t.h * 1.5 && t.h <= t.w * 1.5) return { ...t, alpha: 'OPAQUE', stand: true };
+        }
       } catch { /* folder missing */ }
     }
   }
@@ -245,7 +341,7 @@ writeSky(skyName, OUT);
 const modes = { wingman: { name: 'Wingman', teamSize: 2, roundTime: 90, sites: 1 } };
 const spans = { ct: spawn('info_player_counterterrorist'), t: spawn('info_player_terrorist') };
 const worldJson = {
-  sites, hostages, rescue, hurt: [], ambience: { zones: [], scapes: {}, ambients: [] },
+  game: 'csgo', sites, hostages, rescue, hurt: [], ambience: { zones: [], scapes: {}, ambients: [] },
   groups, props: [], collision, playerOnly, movers, sky: null, spawns: spans,
   fog: null, skyFog: null, sun: null, light: { ambient: [0.32, 0.34, 0.38], direct: col.slice(0, 3).map((c) => (c / m) * 0.8), sunDir },
   skyBrushIdx, surfaces: SURFACES, surfOf, overview: { pos_x: 0, pos_y: 0, scale: 1 }, mode: modes[mode] ?? null,
@@ -255,10 +351,11 @@ const worldJson = {
 const navWorld = makeWorld(collision.concat(playerOnly));
 const doorEntries = movers.filter((mv) => (mv.kind === 'door' && !mv.locked) || (mv.breakable && mv.glass)).flatMap((mv) => mv.entries);
 for (const idx of doorEntries) navWorld.entries[idx] = Float32Array.from([1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
-const allSpawns = [...spans.ct, ...spans.t, ...hostages].map((s) => {
-  let start = s.o;
-  for (const lift of [0, 16, 32, 64, 96, 128]) { start = [s.o[0], s.o[1], s.o[2] + lift]; if (!trace(navWorld, start, start, [-16, -16, 0], [16, 16, 62], collision.length).startSolid) break; }
-  const r = trace(navWorld, start, [start[0], start[1], start[2] - 400], [-16, -16, 0], [16, 16, 62], collision.length);
+const allSpawns = [...spans.ct, ...spans.t, ...hostages].map((s, idx) => {
+  let start = s.o, clear = false;
+  for (const lift of [0, 16, 32, 64, 96, 128]) { start = [s.o[0], s.o[1], s.o[2] + lift]; if (!trace(navWorld, start, start, [-16, -16, 0], [16, 16, 62]).startSolid) { clear = true; break; } }
+  if (!clear) throw new Error(`${MAP} spawn #${idx} trapped startSolid at ${s.o.join(',')}`);
+  const r = trace(navWorld, start, [start[0], start[1], start[2] - 400], [-16, -16, 0], [16, 16, 62]);
   return { o: [s.o[0], s.o[1], r.end[2] + 0.5], yaw: (s.yaw * Math.PI) / 180 };
 });
 fs.rmSync(path.join(OUT, 'nav.json'), { force: true });
@@ -290,4 +387,4 @@ fs.writeFileSync(path.join(OUT, 'overview.png'), png(1024, 1024, 4, img));
 worldJson.overview = { pos_x, pos_y, scale };
 fs.writeFileSync(path.join(OUT, 'world.json'), JSON.stringify(worldJson));
 const winRes = promoteMapWindows(MAP);
-console.log(`${MAP}: ${groups.length} materials (${textured} textured, ${standIns} stand-ins), ${collision.length} brushes + ${playerOnly.length} player clips (${skippedBrushes} bullet-only/non-solid skipped), ${sites.length} bombsites, ${hostages.length} hostages, ${movers.length} movers (+${winRes.addedMovers} promoted windows), ${nav.nodes.length} nav nodes, spawns ${spans.ct.length}/${spans.t.length}`);
+console.log(`${MAP}: ${groups.length} materials (${textured} textured, ${standIns} stand-ins), ${collision.length} brushes (${propCols} prop cols) + ${playerOnly.length} player clips (${skippedBrushes} tool/non-solid skipped), ${sites.length} bombsites, ${hostages.length} hostages, ${movers.length} movers (+${winRes.addedMovers} promoted windows), ${nav.nodes.length} nav nodes, spawns ${spans.ct.length}/${spans.t.length}`);

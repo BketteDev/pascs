@@ -176,17 +176,22 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
     };
   }
 
-  async function adminWindow() { // server admin, HL2 / VGUI style: map, team size, max players (applying restarts the game for everyone)
+  async function adminWindow() { // server admin, HL2 / VGUI style: game, map, team size, max players (applying restarts the game for everyone)
     frame('Server Admin', '<div class="vg-page"><div class="vg-row">Loading...</div></div>', [['Apply', 'apply'], ['Close', 'cancel']]);
-    const [maps, info, roster] = await Promise.all([fetch('/api/maps').then((r) => r.json()).catch(() => []), fetch('/api/info').then((r) => r.json()).catch(() => ({})), adminPost({ password: loadAdminPass(), list: true })]);
+    const [rawMaps, info, roster] = await Promise.all([fetch('/api/maps?grouped=1').then((r) => r.json()).catch(() => ({ css: [], csgo: [] })), fetch('/api/info').then((r) => r.json()).catch(() => ({})), adminPost({ password: loadAdminPass(), list: true })]);
     if (win.hidden) return;
+    const byGame = Array.isArray(rawMaps) ? { css: rawMaps, csgo: [] } : { css: rawMaps.css ?? [], csgo: rawMaps.csgo ?? [] };
+    const curGame = byGame.csgo.includes(info.map) ? 'csgo' : byGame.css.includes(info.map) ? 'css' : (byGame.csgo.length ? 'csgo' : 'css');
+    const mapOpts = (g, sel) => (byGame[g] ?? []).map((m) => `<option${m === sel ? ' selected' : ''}>${esc(m)}</option>`).join('');
     frame('Server Admin', `<div class="vg-page">
-      <label class="vg-row">Map<select data-a="map">${maps.map((m) => `<option${m === info.map ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select><span></span></label>
+      <label class="vg-row">Game<select data-a="game"><option value="css"${curGame === 'css' ? ' selected' : ''}>CS:Source (${byGame.css.length})</option><option value="csgo"${curGame === 'csgo' ? ' selected' : ''}>CS:GO (${byGame.csgo.length})</option></select><span></span></label>
+      <label class="vg-row">Map<select data-a="map">${mapOpts(curGame, info.map)}</select><span></span></label>
       <label class="vg-row">Team size (bots fill)<input class="vg-text" type="number" min="1" max="16" data-a="teamSize" value="${info.teamSize ?? 5}"><span></span></label>
       <label class="vg-row">Max players<input class="vg-text" type="number" min="1" max="32" data-a="maxPlayers" value="${info.maxPlayers ?? 10}"><span></span></label>
       <label class="vg-row vg-check"><input type="checkbox" data-a="bots" ${roster.bots !== false ? 'checked' : ''}>Bots fill the empty slots</label>
       <div class="vg-players">${(roster.players ?? []).map((p) => `<div class="vg-player"><span>${esc(p.name)}</span><small>${p.team === 'spec' ? 'spectator' : p.team.toUpperCase()} · ${p.ping} ms</small><button data-kick="${p.id}">Kick</button></div>`).join('') || '<div class="vg-player"><small>No players connected</small></div>'}</div>
       <div class="vg-row vg-note">Applying restarts the game on the new settings: everyone reloads into it.<span></span><output class="vg-status"></output></div></div>`, [['Apply', 'apply'], ['Close', 'cancel']]);
+    win.querySelector('[data-a="game"]').onchange = (e) => { win.querySelector('[data-a="map"]').innerHTML = mapOpts(e.target.value, info.map); };
     win.onclick = async (e) => {
       if (e.target.dataset.kick) { const r = await adminPost({ password: loadAdminPass(), kick: Number(e.target.dataset.kick) }); if (r.ok) e.target.closest('.vg-player').remove(); else win.querySelector('.vg-status').textContent = r.msg; return; }
       const b = e.target.dataset.b;
