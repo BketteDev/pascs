@@ -18,8 +18,13 @@ import { promoteMapWindows } from './promote-windows.mjs';
 
 const [vmfFile, MAP] = process.argv.slice(2);
 if (!vmfFile || !MAP) { console.log('usage: node tools/vmf-build.mjs <map.vmf> <name> [--mode wingman]'); process.exit(1); }
-// the compiled map in the CS:GO install carries the map's own textures in its pak lump
+// the compiled map in the CS:GO install or local CS:S maps carries embedded textures/models in its pak lump
 if (fs.existsSync(`${CSGO}/maps/${MAP}.bsp`)) console.log(`${MAP}: ${addBspPak(`${CSGO}/maps/${MAP}.bsp`)} files from the CS:GO map's pak`);
+const cssMaps = path.resolve(import.meta.dirname, '..', '..', 'content', 'maps');
+if (fs.existsSync(cssMaps)) {
+  const bsps = fs.readdirSync(cssMaps).filter((f) => f.endsWith('.bsp')).sort((a, b) => (a === MAP + '.bsp' ? -1 : b === MAP + '.bsp' ? 1 : a.localeCompare(b)));
+  for (const f of bsps) addBspPak(path.join(cssMaps, f));
+}
 const mode = process.argv.includes('--mode') ? process.argv[process.argv.indexOf('--mode') + 1] : null;
 const ROOT = path.resolve(import.meta.dirname, '..', '..', 'content', 'css_content', 'materials');
 const OUT = path.resolve(import.meta.dirname, '..', 'public', 'maps', MAP);
@@ -112,18 +117,18 @@ for (const e of ents) {
   if (!/^prop_(static|dynamic|physics|detail)/.test(cls(e)) || inSky(vec(e.props.get('origin')))) continue;
   const placed = emitProp(e);
   if (!placed || !placed.solid) continue;
-  const { m, model, base, o, M, solid } = placed;
-  const place = (pts) => pts.map((q) => applyM3(M, q).map((v, k) => v + o[k]));
-  const phy = solid === 6 ? getPhy(base) : null;
+  const { m, model, base, o, M, scale = 1, solid } = placed;
+  const place = (pts) => pts.map((q) => applyM3(M, scale === 1 ? q : q.map((v) => v * scale)).map((v, k) => v + o[k]));
+  const phy = solid === 6 ? (m.phy ?? (base ? getPhy(base) : null)) : null;
   const surf = surfaceOf(model);
   if (phy?.length) {
     for (const piece of phy) {
       if (piece.points.length < 4) continue;
-      const faces = piece.planes.map(([nx, ny, nz, d]) => { const n = applyM3(M, [nx, ny, nz]); return [...n, d + dot3(n, o)]; });
+      const faces = piece.planes.map(([nx, ny, nz, d]) => { const n = applyM3(M, [nx, ny, nz]); return [...n, d * scale + dot3(n, o)]; });
       collision.push(convexEntry(place(piece.points), faces, piece.edges.map(([p, q]) => place([p, q])))); surfOf.push(surf); propCols++;
     }
   } else if (solid >= 2 && solid <= 4) {
-    const l = m.hullMin, h = m.hullMax;
+    const l = m.hullMin.map((v) => v * scale), h = m.hullMax.map((v) => v * scale);
     const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((c) => [c & 1 ? h[0] : l[0], c & 2 ? h[1] : l[1], c & 4 ? h[2] : l[2]]);
     const edgePairs = []; for (let i = 0; i < 8; i++) for (let k = 0; k < 3; k++) if (!((i >> k) & 1)) edgePairs.push([corners[i], corners[i | (1 << k)]]);
     const faces = []; for (let a = 0; a < 3; a++) for (const sgn of [1, -1]) { const ax = [0, 0, 0]; ax[a] = sgn; const n = applyM3(M, ax); faces.push([...n, dot3(n, place([corners.find((c) => c[a] === (sgn > 0 ? h[a] : l[a]))])[0])]); }
@@ -175,7 +180,7 @@ const readVtf = (file) => {
   }
   return vtfCache.get(file);
 };
-const SEE_THROUGH = /tree|leaf|fence|gate|grate|wire|vine|foliage|plant|bush|shrub|fern|ivy|grass|weed|chainlink|rail|truss|grill|net/;
+const SEE_THROUGH = /tree|leaf|fence|gate|grate|wire|vine|foliage|plant|bush|shrub|fern|ivy|grass|weed|palm|branch|frond|hedge|chainlink|rail|truss|grill|net|rungs|fanblade|decal|poster|card|stencil|curtain|lace/;
 const gridPng = (rgbaA, rgbaB, fn) => {
   const N = 16, px = Buffer.alloc(N * N * 4);
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) px.set(fn(x, y, N) ? rgbaA : rgbaB, (y * N + x) * 4);
@@ -195,7 +200,7 @@ function standIn(name) {
   const isWater = /(?:^|\/)liquids\/|\bwater\b|water_/.test(clean);
   const isGlass = /(?:^|\/)glass\/|glasswindow/.test(clean);
   if (cs2 && (!isGlass || cs2.alpha > 0.02)) {
-    const alpha = cs2.alpha > 0.02 ? (isGlass ? 'BLEND' : SEE_THROUGH.test(clean) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
+    const alpha = cs2.alpha > 0.02 ? (isGlass ? 'BLEND' : (SEE_THROUGH.test(clean) || cs2.trans) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
     return { png: cs2.png, w: cs2.w, h: cs2.h, alpha, stand: true, real: true };
   }
   const base = clean.replace(/^maps\/[^/]+\//, '');

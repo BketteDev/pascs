@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { writeGlb } from './glb.mjs';
 import { loadModel } from './mdl.mjs';
+import { hasCs2Model, loadCs2Model } from './cs2mdl.mjs';
 import { readGameFile, modelBase } from './content.mjs';
 import { png, vtfToRgba } from './vtf.mjs';
 
@@ -196,8 +197,14 @@ const PROP_SUBS = {
 };
 function resolveModelBase(model) {
   if (model.endsWith('_glass.mdl') && !resolveModelBase(model.replace(/_glass\.mdl$/, '.mdl'))) return null;
-  const cand = [model, model.endsWith('_static.mdl') ? model.replace(/_static\.mdl$/, '.mdl') : null, PROP_SUBS[model]].filter(Boolean);
-  for (const c of cand) { const b = modelBase(c); if (b) return { resolved: c, base: b }; }
+  const raw = [model, model.endsWith('_static.mdl') ? model.replace(/_static\.mdl$/, '.mdl') : null].filter(Boolean);
+  for (const c of raw) { const b = modelBase(c); if (b) return { resolved: c, base: b }; }
+  for (const c of raw) if (hasCs2Model(c)) return { resolved: c, base: null, cs2: true };
+  const sub = PROP_SUBS[model];
+  if (sub) {
+    const b = modelBase(sub); if (b) return { resolved: sub, base: b };
+    if (hasCs2Model(sub)) return { resolved: sub, base: null, cs2: true };
+  }
   return null;
 }
 const models = new Map();
@@ -209,22 +216,27 @@ function emitProp(ent) {
   if (!models.has(key)) {
     const res = resolveModelBase(model);
     if (!res) models.set(key, null);
-    else { try { models.set(key, { m: loadModel(res.base, skin), ...res }); } catch { models.set(key, null); } }
+    else { try { const m = res.cs2 ? loadCs2Model(res.resolved, skin) : loadModel(res.base, skin); models.set(key, m ? { m, ...res } : null); } catch { models.set(key, null); } }
   }
   const hit = models.get(key);
   if (!hit) { propsMissing.add(model); return null; }
   const { m, base, resolved } = hit;
   propsPlaced++;
+  const scale = Number(ent.props.get('modelscale') ?? ent.props.get('uniformscale') ?? 1) || 1;
   const o = nums(ent.props.get('origin') ?? '0 0 0'), M = rotation(nums(ent.props.get('angles') ?? '0 0 0'));
   for (const mesh of m.meshes) {
-    const matName = ((mesh.cd[0] ?? '') + mesh.material).replace(/\\/g, '/').toLowerCase();
-    const found = mesh.cd.map((c) => (c + mesh.material).replace(/\\/g, '/').toLowerCase()).find((n) => material(n)) ?? matName;
+    const cds = mesh.cd.length ? mesh.cd : [''];
+    const matName = (cds[0] + mesh.material).replace(/\\/g, '/').toLowerCase();
+    const found = cds.map((c) => (c + mesh.material).replace(/\\/g, '/').toLowerCase()).find((n) => material(n)) ?? matName;
     const b = bucket('prop:' + found);
     b.name = 'prop:' + found; b.texW = b.texH = 1; // model UVs are already 0..1
-    for (let i = 0; i < mesh.pos.length; i += 3) b.pos.push(...add(applyM(M, mesh.pos.slice(i, i + 3)), o));
+    for (let i = 0; i < mesh.pos.length; i += 3) {
+      const p = scale === 1 ? mesh.pos.slice(i, i + 3) : [mesh.pos[i] * scale, mesh.pos[i + 1] * scale, mesh.pos[i + 2] * scale];
+      b.pos.push(...add(applyM(M, p), o));
+    }
     b.uv.push(...mesh.uv);
   }
-  return { m, model: resolved, rawModel: model, base, o, M, solid: Number(ent.props.get('solid') ?? 6) };
+  return { m, model: resolved, rawModel: model, base, o, M, scale, solid: Number(ent.props.get('solid') ?? 6) };
 }
 
 // ---------- main ----------

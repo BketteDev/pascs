@@ -9,19 +9,25 @@ import { openVpk } from './vpk.mjs';
 const VPK = 'C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/game/csgo/pak01_dir.vpk';
 const CACHE = path.resolve(import.meta.dirname, '.cache', 'cs2tex');
 const MAX_SIZE = 1024; // pick the mip level that keeps textures at or under this size
-let vpk = null, byBase = null;
+let vpk = null, byBase = null, byStem = null;
 
 function index() {
   if (byBase) return;
-  vpk = openVpk(VPK); byBase = new Map();
+  vpk = openVpk(VPK); byBase = new Map(); byStem = new Map();
   for (const k of vpk.entries.keys()) {
     if (!k.startsWith('materials/') || !k.endsWith('.vtex_c')) continue;
-    const m = k.match(/([^/]+?)_(color|c|diffuse|albedo)(?:_[a-z]+)?_[0-9a-f]{6,8}\.vtex_c$/);
-    if (m) (byBase.get(m[1]) ?? byBase.set(m[1], []).get(m[1])).push(k);
+    const m = k.match(/([^/]+?)(?:_vmat_g)?_(color|c|diffuse|albedo|tcolor)(?:_[a-z]+)?_[0-9a-f]{6,8}\.vtex_c$/);
+    if (!m) continue;
+    const base = m[1];
+    (byBase.get(base) ?? byBase.set(base, []).get(base)).push(k);
+    const stem = base.replace(/^(?:inferno|inf|mirage|nuke|vertigo|overpass|italy|dust2|baggage|office|hr)_/, '');
+    if (stem !== base) (byStem.get(stem) ?? byStem.set(stem, []).get(stem)).push(k);
   }
 }
 
-function lz4(src, outLen) {
+export function cs2Pak() { index(); return vpk; }
+
+export function lz4(src, outLen) {
   const out = Buffer.alloc(outLen); let s = 0, d = 0;
   while (s < src.length) {
     const t = src[s++]; let lit = t >> 4;
@@ -74,24 +80,36 @@ function dds({ w, h, fmt, data }) {
 /** Candidate vtex paths for a legacy material name: same folder first, then any folder; "inf" prefixes are optional. */
 export function cs2Find(name) {
   index();
-  const n = name.trim().toLowerCase().replace(/^maps\/[^/]+\//, '').replace(/_-?\d+_-?\d+_-?\d+$/, '');
-  for (const cand of [`materials/${n}.vmat_c`, `materials/${n}_.vmat_c`]) {
+  const n = name.trim().toLowerCase().replace(/\\/g, '/').replace(/^materials\//, '').replace(/\.vmat(?:_c)?$/, '').replace(/^maps\/[^/]+\//, '').replace(/_-?\d+_-?\d+_-?\d+$/, '');
+  const clean = n.replace(/_(?:cheap|clean|dirty|nodetail)$/, '');
+  for (const cand of [`materials/${n}.vmat_c`, `materials/${n}_.vmat_c`, `${n}.vmat_c`, ...(clean !== n ? [`materials/${clean}.vmat_c`] : [])]) {
     if (!vpk.entries.has(cand)) continue;
-    const strs = vpk.read(cand).toString('latin1').match(/materials\/[a-z0-9_\/\-]+\.vtex/gi) ?? [];
-    const pick = strs.find((s) => /_(color|c|diffuse|albedo)(?:_[a-z]+)?_[0-9a-f]+\.vtex$/i.test(s) && !/default/i.test(s))
-      ?? strs.find((s) => !/normal|ao|mask|rough|metal|height|tint|selfillum|detail|trans|default/i.test(s));
-    const vtex = pick && pick.toLowerCase() + '_c';
-    if (vtex && vpk.entries.has(vtex)) return vtex;
+    const strs = (vpk.read(cand).toString('latin1').match(/materials\/[a-z0-9_\/\-]+\.vtex/gi) ?? [])
+      .map((s) => s.toLowerCase() + '_c').filter((k) => vpk.entries.has(k) && !/(?:^|\/|_)default/.test(k));
+    const pick = strs.find((s) => /(?:_vmat_g)?_(color|c|diffuse|albedo|tcolor)(?:_[a-z]+)?_[0-9a-f]+\.vtex_c$/.test(s))
+      ?? strs.find((s) => !/normal|ao|ambient|mask|rough|metal|height|tint|selfillum|detail|trans/.test(s))
+      ?? strs.find((s) => /_trans_(?:[a-z]+_)?[0-9a-f]+\.vtex_c$/.test(s));
+    if (pick) return pick;
   }
-  const base = n.split('/').pop(), dir = n.includes('/') ? n.slice(0, n.lastIndexOf('/')) : '';
-  const list = byBase.get(base) ?? byBase.get(base.replace(/^inf/, '')) ?? [];
-  return list.slice().sort((a, b) => (b.startsWith('materials/' + dir + '/') ? 1 : 0) - (a.startsWith('materials/' + dir + '/') ? 1 : 0))[0] ?? null;
+  const base = clean.split('/').pop(), dir = clean.includes('/') ? clean.slice(0, clean.lastIndexOf('/')) : '';
+  const list = byBase.get(base) ?? byBase.get(base.replace(/^inf/, '')) ?? byStem.get(base) ?? [];
+  if (list.length) return list.slice().sort((a, b) => (b.startsWith('materials/' + dir + '/') ? 1 : 0) - (a.startsWith('materials/' + dir + '/') ? 1 : 0))[0];
+  // Last resort before stand-in: match stripped numeric variant within the same top-level folder (e.g. concrete/concrete_ext_12 -> concrete_ext_07)
+  const top = dir.split('/')[0], pref = base.replace(/\d+[a-z]?$/, '');
+  if (top && pref.length >= 6 && !/blend|decal|card|overlay|sky/.test(clean)) {
+    for (const [k, v] of byBase) if (k.startsWith(pref)) {
+      const hit = v.find((p) => p.startsWith('materials/' + top + '/'));
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 /** PNG for a material name from CS2, or null. Returns { png: Buffer, w, h, alpha: fraction of non-opaque pixels }. */
 export function cs2Texture(name) {
   let path0; try { path0 = cs2Find(name); } catch { return null; }
-  return path0 ? cs2TextureAt(path0) : null;
+  const tx = path0 ? cs2TextureAt(path0) : null;
+  return tx && { ...tx, trans: /_trans_/.test(path0) };
 }
 /** PNG for an exact vtex path in the CS2 VPK (e.g. names cs2Find's pattern does not index), or null. */
 export function cs2TextureAt(path0) {
