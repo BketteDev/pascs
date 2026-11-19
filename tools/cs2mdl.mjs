@@ -231,14 +231,33 @@ function decimateDrawCalls(calls, { pos, uv, idx }, hullMin, hullMax, cap) {
 }
 
 const normVmdl = (rel) => rel.trim().replace(/\\/g, '/').toLowerCase().replace(/\.mdl$/, '.vmdl_c');
+// shortcut: basename fallback matches CS:GO models relocated under CS2 map folders for common prop families; widen if needed
+const SAFE_BASE = /^(?:park_fence|railing|stair_railing|fence|tree|mall_tree|urban_bush|bush|hedge|bucket|plasticbucket|traffic_cone|trafficcone|phone_booth|hotel_rooftop|hotel_pipe|curb|chimney|chair|table|bench|trash|crate|barrel|door|lamp|light)/;
+let byBase = null;
+function cs2BaseIndex() {
+  if (byBase) return byBase;
+  byBase = new Map();
+  for (const k of cs2Pak().entries.keys()) {
+    if (!k.endsWith('.vmdl_c')) continue;
+    const b = k.slice(k.lastIndexOf('/') + 1, -7);
+    if (!byBase.has(b)) byBase.set(b, k);
+  }
+  return byBase;
+}
+export function findCs2Model(rel) {
+  const key = normVmdl(rel), pak = cs2Pak();
+  if (pak.entries.has(key)) return key;
+  const base = key.slice(key.lastIndexOf('/') + 1, -7);
+  return SAFE_BASE.test(base) ? cs2BaseIndex().get(base) ?? null : null;
+}
 
 export function hasCs2Model(rel) {
-  return cs2Pak().entries.has(normVmdl(rel));
+  return !!findCs2Model(rel);
 }
 
 export function loadCs2Model(rel, skin = 0, cap = MAX_TRIS) {
-  const key = normVmdl(rel), pak = cs2Pak();
-  if (!pak.entries.has(key)) return null;
+  const key = findCs2Model(rel), pak = cs2Pak();
+  if (!key) return null;
   const bl = blocks(pak.read(key));
   const mdat = kv3(bl.get('MDAT')), mbuf = bl.get('MBUF');
   if (!mdat || !mbuf) return null;

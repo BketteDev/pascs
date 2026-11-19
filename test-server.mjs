@@ -391,6 +391,43 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     assert(me().owned.includes('ak47') && !me().owned.includes('m4a1') && a.last.drops.some((d) => d.w === 'm4a1'), 'E swaps m4a1 for dropped ak47');
     console.log('weapon drop & pickup ok');
   }
+  { // Killfeed modifiers: blind, no-scope, airborne, through smoke and flash assist
+    const alice = game.ents.get(a.id), bob = game.ents.get(b.id), mate = [...game.ents.values()].find((e) => e.team === 'ct' && e.id !== alice.id);
+    const { trace } = await import('./public/physics.js');
+    alice.alive = true; alice.health = 100; alice.owned.add('awp'); alice.weapon = 'awp';
+    bob.alive = true; bob.health = 100; bob.armor = 0; bob.helmet = false;
+    for (const ent of [alice, bob]) Object.assign(ent.p, { ducked: false, ducking: false, eyeZ: 64, v: [0, 0, 0] });
+    const origin = [...alice.p.o], zero = [0, 0, 0];
+    const at = [origin, ...game.ents.values().filter((e) => e.alive).map((e) => e.p.o)];
+    let placed = false;
+    placement: for (const start of at) {
+      alice.p.o = [start[0], start[1], start[2] + 12];
+      if (alice.p.tr(alice.p.o, alice.p.o).startSolid) continue;
+      for (const r of [80, 120, 160]) for (let k = 0; k < 8; k++) {
+        const o = [start[0] + Math.cos(k * Math.PI / 4) * r, start[1] + Math.sin(k * Math.PI / 4) * r, start[2] + 12];
+        const ray = trace(alice.p.world, alice.p.eye, [o[0], o[1], o[2] + 62], zero, zero);
+        if (bob.p.tr(o, o).startSolid || ray.startSolid || ray.fraction < 1) continue;
+        bob.p.o = o; placed = true; break placement;
+      }
+    }
+    assert(placed, 'found a clear path for the modifiers test');
+    const mid = [0, 1, 2].map((k) => (alice.p.o[k] + bob.p.o[k]) / 2);
+    // Drop a bloomed smoke right between Alice & Bob, blind Alice, flash-assist Bob via mate, put Alice in the air, and fire an unscoped AWP headshot
+    const nowS = game.tick() / 128;
+    game.smokes.push({ id: 9999, o: [mid[0], mid[1], mid[2] - 20], age: 3 });
+    alice.blindUntil = nowS + 4;
+    bob.blindUntil = nowS + 4; bob.flashedBy = mate.id;
+    alice.p.onGround = false; alice.p.v = [0, 0, 180]; alice.fireTok = 3;
+    a.events.length = 0;
+    const eye = alice.p.eye, d = [bob.p.o[0] - eye[0], bob.p.o[1] - eye[1], bob.p.o[2] + 62 - eye[2]];
+    a.send({ t: 'fire', w: 'awp', sc: 0 });
+    a.send({ t: 'hit', target: bob.id, group: 1, bone: 14, w: 'awp', o: eye, d });
+    await sleep(120);
+    game.smokes.length = 0;
+    const death = a.events.find((e) => e.e === 'death' && e.victim === bob.id);
+    assert(death && death.hs && death.smk === 1 && death.blind === 1 && death.ns === 1 && death.air === 1 && death.as === mate.id && death.fa === 1, 'killfeed modifiers emitted: ' + JSON.stringify(death));
+    console.log('killfeed modifiers ok:', JSON.stringify({ hs: death.hs, smk: death.smk, blind: death.blind, ns: death.ns, air: death.air, as: death.as, fa: death.fa, dom: death.dom, rev: death.rev }));
+  }
   { // shooting range: target bots in view of the shooters, no bomb, the dead come back
     const g4 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), range: true, teamSize: 4 });
     await sleep(400);

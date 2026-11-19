@@ -4,10 +4,11 @@
 
 export const TICK_RATE = 128;       // server + client simulate usercmds at 128 Hz
 export const TICK = 1 / TICK_RATE;  // frametime of every usercmd
-const GRAVITY = 800, ACCELERATE = 5, AIR_ACCELERATE = 10, FRICTION = 4, STOP_SPEED = 75, MAX_VELOCITY = 3500;
-const STEP_SIZE = 18, DIST_EPSILON = 0.03125, AIR_SPEED_CAP = 30;
-const STAMINA_MAX = 100, STAMINA_COST_JUMP = 25, STAMINA_RECOVER_RATE = 19;   // cs_gamemovement.cpp
-const BUNNYJUMP_MAX_SPEED_FACTOR = 1.1;                                       // sv_enablebunnyhopping 0
+const GRAVITY = 800, ACCELERATE = 5, AIR_ACCELERATE = 42, FRICTION = 4, STOP_SPEED = 75, MAX_VELOCITY = 3500;
+const STEP_SIZE = 18, DIST_EPSILON = 0.03125, AIR_SPEED_CAP = 36;
+const STAMINA_MAX = 100, STAMINA_COST_JUMP = 0, STAMINA_RECOVER_RATE = 19;    // sv_staminajumpcost 0 for smooth bhop
+const BUNNYJUMP_MAX_SPEED_FACTOR = 1.45;
+const BHOP_BOOST_FACTOR = 1.04, BHOP_BOOST_CAP = 1.24;
 const JUMP_VELOCITY = Math.sqrt(2 * 800 * 57.0);                              // 301.993
 const TIME_TO_DUCK = 0.4, TIME_TO_UNDUCK = 0.2;
 const DUCK_MODIFIER = 0.34, WALK_MODIFIER = 0.52, CLIENT_SPEED = 450;         // cl_forwardspeed / cl_sidespeed
@@ -43,49 +44,65 @@ function triPlanes(a, b, c) {
   }
   return out;
 }
-export function makeWorld(raw) {
+const cellKey = (x, y) => ((x + 32768) << 16) | ((y + 32768) & 0xffff);
+export function makeWorld(raw, ladders = []) {
   // entries: convex brush [bounds(6), (nx,ny,nz,d)*] or triangle [bounds(6), 9 vertex coords] (length 15)
   const entries = raw.map((e) => { if (e.length !== 15) return e; const p = triPlanes(e.slice(6, 9), e.slice(9, 12), e.slice(12, 15)); return p ? Float32Array.from([...e.slice(0, 6), ...p]) : [0, 0, 0, 0, 0, 0]; });
   const cells = new Map();
   entries.forEach((e, i) => {
-    for (let x = Math.floor(e[0] / CELL); x <= Math.floor(e[3] / CELL); x++) for (let y = Math.floor(e[1] / CELL); y <= Math.floor(e[4] / CELL); y++) {
-      const k = x + ',' + y;
-      (cells.get(k) ?? cells.set(k, []).get(k)).push(i);
+    const x0 = Math.floor(e[0] / CELL), x1 = Math.floor(e[3] / CELL), y0 = Math.floor(e[1] / CELL), y1 = Math.floor(e[4] / CELL);
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const k = cellKey(x, y);
+      let list = cells.get(k);
+      if (!list) { list = []; cells.set(k, list); }
+      list.push(i);
     }
   });
-  return { entries, cells, stamp: new Uint32Array(entries.length), tick: 0 };
+  return { entries, cells, stamp: new Uint32Array(entries.length), tick: 0, ladders };
 }
 
 // Box sweep vs convex brushes (VBSP bevels make axial boxes exact). Returns {fraction,end,normal|null,startSolid,allSolid}.
 export function trace(world, start, end, mins, maxs, limit = Infinity, skip = null) { // limit: ignore entries with index >= limit (bullets skip player-only clips)
   const EPS = DIST_EPSILON;
-  const r = { fraction: 1, normal: null, startSolid: false, allSolid: false };
-  const lo = [0, 1, 2].map((a) => Math.min(start[a], end[a]) + mins[a] - 1), hi = [0, 1, 2].map((a) => Math.max(start[a], end[a]) + maxs[a] + 1);
-  const stamp = ++world.tick;
-  for (let cx = Math.floor(lo[0] / CELL); cx <= Math.floor(hi[0] / CELL); cx++) for (let cy = Math.floor(lo[1] / CELL); cy <= Math.floor(hi[1] / CELL); cy++) {
-    for (const idx of world.cells.get(cx + ',' + cy) ?? []) {
-      if (idx >= limit || world.stamp[idx] === stamp || skip?.has(idx)) continue;
-      world.stamp[idx] = stamp;
-      const b = world.entries[idx];
-      if (b[0] > hi[0] || b[1] > hi[1] || b[2] > hi[2] || b[3] < lo[0] || b[4] < lo[1] || b[5] < lo[2]) continue;
-      let enter = -1, leave = 1, getOut = false, startOut = false, clip = null, miss = false;
-      for (let i = 6; i < b.length; i += 4) {
+  const s0 = start[0], s1 = start[1], s2 = start[2], e0 = end[0], e1 = end[1], e2 = end[2];
+  const mn0 = mins[0], mn1 = mins[1], mn2 = mins[2], mx0 = maxs[0], mx1 = maxs[1], mx2 = maxs[2];
+  const lo0 = (s0 < e0 ? s0 : e0) + mn0 - 1, lo1 = (s1 < e1 ? s1 : e1) + mn1 - 1, lo2 = (s2 < e2 ? s2 : e2) + mn2 - 1;
+  const hi0 = (s0 > e0 ? s0 : e0) + mx0 + 1, hi1 = (s1 > e1 ? s1 : e1) + mx1 + 1, hi2 = (s2 > e2 ? s2 : e2) + mx2 + 1;
+  const cx0 = Math.floor(lo0 / CELL), cx1 = Math.floor(hi0 / CELL), cy0 = Math.floor(lo1 / CELL), cy1 = Math.floor(hi1 / CELL);
+  const entries = world.entries, cells = world.cells, st = world.stamp;
+  const stamp = (world.tick + 1) >>> 0 || 1;
+  if (stamp === 1 && world.tick !== 0) st.fill(0);
+  world.tick = stamp;
+  let frac = 1, startSolid = false, allSolid = false, entry = undefined, hitN = false, nX = 0, nY = 0, nZ = 0;
+  for (let cx = cx0; cx <= cx1; cx++) for (let cy = cy0; cy <= cy1; cy++) {
+    const list = cells.get(cellKey(cx, cy));
+    if (!list) continue;
+    for (let li = 0; li < list.length; li++) {
+      const idx = list[li];
+      if (idx >= limit || st[idx] === stamp) continue;
+      st[idx] = stamp;
+      if (skip?.has(idx)) continue;
+      const b = entries[idx];
+      if (b[0] > hi0 || b[1] > hi1 || b[2] > hi2 || b[3] < lo0 || b[4] < lo1 || b[5] < lo2) continue;
+      let enter = -1, leave = 1, getOut = false, startOut = false, miss = false, hasClip = false, cX = 0, cY = 0, cZ = 0;
+      for (let i = 6, bl = b.length; i < bl; i += 4) {
         const nx = b[i], ny = b[i + 1], nz = b[i + 2];
-        const dist = b[i + 3] - ((nx < 0 ? maxs[0] : mins[0]) * nx + (ny < 0 ? maxs[1] : mins[1]) * ny + (nz < 0 ? maxs[2] : mins[2]) * nz);
-        const d1 = start[0] * nx + start[1] * ny + start[2] * nz - dist, d2 = end[0] * nx + end[1] * ny + end[2] * nz - dist;
+        const dist = b[i + 3] - ((nx < 0 ? mx0 : mn0) * nx + (ny < 0 ? mx1 : mn1) * ny + (nz < 0 ? mx2 : mn2) * nz);
+        const d1 = s0 * nx + s1 * ny + s2 * nz - dist, d2 = e0 * nx + e1 * ny + e2 * nz - dist;
         if (d2 > 0) getOut = true;
         if (d1 > 0) startOut = true;
         if (d1 > 0 && (d2 >= EPS || d2 >= d1 - 1e-4)) { miss = true; break; } // 1e-4: motion parallel to a plane (after clipping) must not count as "into" it by float noise
         if (d1 <= 0 && d2 <= 0) continue;
-        if (d1 > d2) { const f = (d1 - EPS) / (d1 - d2); if (f > enter) { enter = f; clip = [nx, ny, nz]; } }
+        if (d1 > d2) { const f = (d1 - EPS) / (d1 - d2); if (f > enter) { enter = f; hasClip = true; cX = nx; cY = ny; cZ = nz; } }
         else { const f = (d1 + EPS) / (d1 - d2); if (f < leave) leave = f; }
       }
       if (miss) continue;
-      if (!startOut) { r.startSolid = true; if (!getOut) r.allSolid = true; continue; }
-      if (enter < leave && enter > -1 && enter < r.fraction) { r.fraction = Math.max(enter, 0); r.normal = clip; r.entry = idx; }
+      if (!startOut) { startSolid = true; if (!getOut) allSolid = true; continue; }
+      if (enter < leave && enter > -1 && enter < frac) { frac = enter > 0 ? enter : 0; hitN = hasClip; nX = cX; nY = cY; nZ = cZ; entry = idx; }
     }
   }
-  r.end = madd(start, [end[0] - start[0], end[1] - start[1], end[2] - start[2]], r.fraction);
+  const r = { fraction: frac, normal: hitN ? [nX, nY, nZ] : null, startSolid, allSolid, end: [s0 + (e0 - s0) * frac, s1 + (e1 - s1) * frac, s2 + (e2 - s2) * frac] };
+  if (entry !== undefined) r.entry = entry;
   return r;
 }
 
@@ -109,6 +126,7 @@ export class Player {
     this.eyeZ = VIEW_STAND;
     this.prev = { o: [...origin], eyeZ: VIEW_STAND };
     this.dt = TICK;
+    this.onLadder = false; this.ladderNormal = null; this.ladderCooldown = 0;
     this.others = null;                          // () => [{ o, ducked }]: the other live players, who are solid to us
   }
 
@@ -256,17 +274,24 @@ export class Player {
     this.tryPlayerMove();
   }
 
-  // ---------- jumping (CCSGameMovement::CheckJumpButton) ----------
+  // ---------- jumping (sv_autobunnyhopping 1 + sv_enablebunnyhopping 1) ----------
   checkJump() {
     if (!this.onGround) { this.oldJump = true; return; }
-    if (this.oldJump) return;               // no pogo-sticking: the button must be released first (no autohop)
-    // PreventBunnyJumping: crop 3D speed to 1.1 * weapon max speed
+    // Auto-bhop: holding jump triggers cleanly on the landing tick with zero friction frame.
+    const spd2 = Math.hypot(this.v[0], this.v[1]);
+    if (this.oldJump && spd2 < this.moveMax * 0.7 && (this.fmove || this.smove)) {
+      const { dir, speed } = this.wish();
+      this.accelerate(dir, speed, 28); // a held jump can build momentum from a standstill
+    } else if (spd2 > 140 && spd2 < this.maxSpeed * BHOP_BOOST_CAP && (this.fmove || this.smove)) {
+      const k = Math.min(spd2 * BHOP_BOOST_FACTOR, this.maxSpeed * BHOP_BOOST_CAP) / spd2;
+      this.v[0] *= k; this.v[1] *= k;
+    }
     const cap = BUNNYJUMP_MAX_SPEED_FACTOR * this.maxSpeed, spd = len(this.v);
     if (spd > cap) this.v = this.v.map((x) => x * (cap / spd));
     this.setGround(false);
     if (this.ducking || this.ducked) this.v[2] = JUMP_VELOCITY; else this.v[2] += JUMP_VELOCITY;
     if (this.stamina > 0) this.v[2] *= (STAMINA_MAX - (this.stamina / 1000) * STAMINA_RECOVER_RATE) / STAMINA_MAX;
-    this.stamina = (STAMINA_COST_JUMP / STAMINA_RECOVER_RATE) * 1000;
+    if (STAMINA_COST_JUMP > 0) this.stamina = (STAMINA_COST_JUMP / STAMINA_RECOVER_RATE) * 1000;
     this.v[2] -= GRAVITY * this.dt * 0.5;   // FinishGravity() inside CheckJumpButton
     this.oldJump = true;
   }
@@ -328,6 +353,62 @@ export class Player {
 
   checkVelocity() { this.v = this.v.map((x) => Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, x))); }
 
+  ladderMove(inp) {
+    this.ladderCooldown = Math.max(0, (this.ladderCooldown ?? 0) - this.dt);
+    const wasAttached = this.onLadder;
+    this.onLadder = false;
+    if (this.ladderCooldown) return false;
+    const cp = Math.cos(this.pitch), wish = [
+      cp * Math.cos(this.yaw) * (inp.fwd ?? 0) + Math.sin(this.yaw) * (inp.side ?? 0),
+      cp * Math.sin(this.yaw) * (inp.fwd ?? 0) - Math.cos(this.yaw) * (inp.side ?? 0),
+      Math.sin(this.pitch) * (inp.fwd ?? 0),
+    ];
+    for (const l of this.world.ladders ?? []) {
+      if (this.o.some((v, k) => v + (k === 2 ? this.hullMaxs[2] : 18) < l.min[k] || v - (k === 2 ? 4 : 18) > l.max[k])) continue;
+      const outside = [0, 1].map((k) => Math.max(l.min[k] - this.o[k], this.o[k] - l.max[k], 0));
+      let axis;
+      if (wasAttached && this.ladderNormal) axis = this.ladderNormal[0] ? 0 : 1;
+      else if (outside[0] !== outside[1]) axis = outside[0] > outside[1] ? 0 : 1;
+      else axis = l.max[0] - l.min[0] <= l.max[1] - l.min[1] ? 0 : 1;
+      const normal = wasAttached && this.ladderNormal ? this.ladderNormal : [0, 0, 0];
+      if (!wasAttached || !this.ladderNormal) normal[axis] = this.o[axis] < (l.min[axis] + l.max[axis]) / 2 ? -1 : 1;
+      const into = dot(wish, normal);
+      if (!wasAttached && into >= -0.05 && !(this.o[2] > l.min[2] && wish[2] < -0.1)) continue;
+      if (inp.jump) {
+        this.v = normal.map((v) => v * 200); this.v[2] = 100;
+        this.ladderCooldown = 0.25; this.oldJump = true; this.onGround = false;
+        return false;
+      }
+      this.onLadder = true; this.ladderNormal = normal; this.onGround = false;
+      this.v = wish.map((v, k) => v - normal[k] * into);
+      this.v[2] -= into; // Convert movement into the wall to vertical movement, as in Source LadderMove.
+      const speed = len(this.v), scale = 200 / Math.max(1, speed);
+      this.v = this.v.map((v) => v * scale);
+      if (this.o[2] >= l.max[2] - 2 && this.v[2] > 0) {
+        // Sweep the whole hull to a clear landing, including side exits beside a wall.
+        const up = this.tr(this.o, [this.o[0], this.o[1], l.max[2] + STEP_SIZE * 2 + 1]);
+        const tangent = [-normal[1], normal[0], 0];
+        for (const dir of [normal.map((v) => -v), tangent, tangent.map((v) => -v), normal]) {
+          const across = this.tr(up.end, madd(up.end, dir, 40));
+          const down = this.tr(across.end, [across.end[0], across.end[1], l.max[2] - STEP_SIZE * 2]);
+          if (!up.startSolid && !across.startSolid && across.fraction === 1 && !down.startSolid && down.normal?.[2] > 0.7) {
+            this.o = down.end; this.v = [0, 0, 0]; this.onLadder = false; this.onGround = true; this.ladderCooldown = 0.25;
+            return true;
+          }
+        }
+        this.v[axis] -= normal[axis] * 80;
+      }
+      const descending = this.v[2] < 0;
+      this.tryPlayerMove();
+      if (descending) {
+        this.categorizePosition();
+        if (this.onGround) { this.onLadder = false; this.ladderCooldown = 0.25; }
+      }
+      return true;
+    }
+    return false;
+  }
+
   /**
    * One usercmd (TICK seconds). inp = { fwd, side (-1..1), jump (button HELD), duck (held), walk (held, +speed) }.
    * Order mirrors CGameMovement::PlayerMove -> FullWalkMove.
@@ -351,6 +432,8 @@ export class Player {
     this.checkStuck();
     if (this.v[2] > 250) this.setGround(false);
     this.duck(inp);
+
+    if (this.ladderMove(inp)) { this.checkVelocity(); this.separate(); return; }
 
     // FullWalkMove
     this.v[2] -= GRAVITY * 0.5 * dt;            // StartGravity

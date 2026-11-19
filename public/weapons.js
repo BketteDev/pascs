@@ -181,7 +181,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
       object.geometry?.dispose();
       object.material?.dispose();
     });
-    vm.skeleton.dispose();
+    vm.skeleton?.dispose();
   }
 
   function refreshCosmetic(key) {
@@ -212,6 +212,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   const muzzle = new THREE.Vector3();
   function poseViewModel(key, t) { // write interpolated skinning matrices into the bones; returns muzzle (model space) or null
     const vm = vms[key];
+    if (!vm.seqs.length) return null;
     if (!vm.anim || (!(s.pin && key === s.cur) && !vm.anim.seq.loop && (t - vm.anim.start) * vm.anim.seq.fps >= vm.anim.seq.frames - 1)) {
       if (!vm.anim || !vm.anim.seq.activity.startsWith('ACT_VM_IDLE')) playAct(key, 'ACT_VM_IDLE');
     }
@@ -351,14 +352,14 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   }
   const fxTracerGeo = new THREE.BoxGeometry(1, 0.24, 0.24).translate(-0.5, 0, 0);
   const fxTracerMat = new THREE.MeshBasicMaterial({ color: 0xffe4a8, transparent: true, opacity: 0.48, blending: THREE.AdditiveBlending, depthWrite: false });
-  const fxTracers = [];
+  const fxTracers = [], VX = new THREE.Vector3(1, 0, 0), VZ = new THREE.Vector3(0, 0, 1), V_TMP = new THREE.Vector3();
   function spawnTracer(from, to) {
     const d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]], len = Math.hypot(...d);
     if (len < 32) return;
     let tr = fxTracers.find((x) => !x.mesh.visible);
     if (!tr) { tr = { mesh: new THREE.Mesh(fxTracerGeo, fxTracerMat) }; tr.mesh.frustumCulled = false; worldRoot.add(tr.mesh); fxTracers.push(tr); }
     Object.assign(tr, { from, dir: d.map((v) => v / len), len, at: 0 }); tr.mesh.visible = true;
-    tr.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), new THREE.Vector3(...tr.dir));
+    tr.mesh.quaternion.setFromUnitVectors(VX, V_TMP.set(tr.dir[0], tr.dir[1], tr.dir[2]));
   }
   function stepFx(dt) {
     for (const f of fx) {
@@ -387,7 +388,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     const kind = HOLE_OF[surface] ?? 'concrete';
     h.material = holeMats[kind][(Math.random() * 5) | 0]; h.scale.set(HOLE_SIZE[kind], HOLE_SIZE[kind], 1); h.visible = true;
     h.position.set(pos[0] + n[0] * 0.15, pos[1] + n[1] * 0.15, pos[2] + n[2] * 0.15);
-    h.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(n[0], n[1], n[2]));
+    h.quaternion.setFromUnitVectors(VZ, V_TMP.set(n[0], n[1], n[2]));
     h.rotateZ(Math.random() * 6.28);
   };
 
@@ -534,6 +535,14 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     const burst = d.burst && s.burst[s.cur];
     if (burst && !burstShot) { s.burstLeft = d.burst.n - 1; s.burstNext = t + d.burst.gap; s.nextFire = t + d.burst.cycle; } // the other rounds follow on their own
     a.mag--; hudUpdate();
+    if (d.projectile) {
+      playAct(s.cur, 'ACT_VM_DRYFIRE', 'ACT_VM_PRIMARYATTACK');
+      net.send({ t: 'fire', w: s.cur });
+      play(d.sounds.fire, 0.75);
+      s.punch[0] += 2;
+      s.stats.shots++;
+      return;
+    }
     s.shots++;
     const acc = accuracyAt(d, s.shots, t); s.acc = acc; s.lastFire = t;
     const spread = spreadAt(d, acc) * (burst ? d.burst.spread : 1), hits = [];
@@ -553,7 +562,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     hud.setSpread(Math.tan((crosshairDeg() * Math.PI) / 180), fov(73.74), [s.punch[0] * 0.55, s.punch[1] * 0.55]);
     s.flashUntil = t + 0.06; s.flashRoll = null;
     playAct(s.cur, a.mag === 0 ? 'ACT_VM_DRYFIRE' : 'ACT_VM_PRIMARYATTACK', 'ACT_VM_PRIMARYATTACK');
-    net.send({ t: 'fire', w: s.cur, to: s.lastEnd?.map((v) => Math.round(v)) }); // others hear the shot and see its tracer
+    net.send({ t: 'fire', w: s.cur, sc: s.zoom ? 1 : 0, to: s.lastEnd?.map((v) => Math.round(v)) }); // others hear the shot and see its tracer
     for (const h of hits) net.send(h); // after the shot: the server only accepts hits from shots it has seen
     s.stats.shots++; if (hits.length) { s.stats.hits++; if (hits.some((h) => h.group === 1)) s.stats.hs++; }
     play(d.sounds.fire, 0.75);
@@ -766,8 +775,12 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     showFlash(s.cur, t, s.flashUntil, s.zoom);
   }
 
+  let lastAspect = 0;
   function render(aspect) {
-    camera.fov = (2 * Math.atan(Math.tan((VM_FOV * rad) / 2) * 0.75)) / rad; camera.aspect = aspect; camera.updateProjectionMatrix();
+    if (aspect !== lastAspect) {
+      lastAspect = aspect;
+      camera.fov = (2 * Math.atan(Math.tan((VM_FOV * rad) / 2) * 0.75)) / rad; camera.aspect = aspect; camera.updateProjectionMatrix();
+    }
     renderer.clearDepth(); renderer.render(scene, camera);
   }
   // vertical fov for the current zoom level (scope values are horizontal degrees at 4:3, like the weapon scripts)

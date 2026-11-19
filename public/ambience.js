@@ -9,17 +9,22 @@ export function createAmbience({ ambience, visible }) {
   let current = null, loops = [], randoms = [], nextCheck = 0;
   const far = (o, reach) => { const e = listenerPos(), d = Math.hypot(o[0] - e[0], o[1] - e[1], o[2] - e[2]); return Math.max(0, 1 - d / reach) ** 1.4; };
 
+  const trackLoop = (wave, pos) => {
+    const item = { handle: null, stopped: false };
+    startLoop(wave, pos).then((h) => { if (item.stopped) h.stop(); else item.handle = h; });
+    return item;
+  };
   // ambient_generic loops: always on, heard by distance
-  const fixed = ambients.map((a) => ({ a, h: startLoop(a.wave, a.everywhere ? null : a.o) }));
+  const fixed = ambients.map((a) => ({ a, h: trackLoop(a.wave, a.everywhere ? null : a.o) }));
 
   async function enter(zone) {
-    for (const l of loops) l.h.then((h) => h.stop());
+    for (const l of loops) { l.h.stopped = true; l.h.handle?.stop(); }
     loops = []; randoms = [];
     const t = performance.now() / 1000;
     for (const el of scapes[zone.name] ?? []) {
       const pos = el.pos === null ? null : zone.pos[el.pos];
       if (el.pos !== null && !pos) continue; // the zone doesn't set that position
-      if (el.loop) loops.push({ el, pos, h: startLoop(el.waves[0], pos) });
+      if (el.loop) loops.push({ el, pos, h: trackLoop(el.waves[0], pos) });
       else randoms.push({ el, pos, next: t + el.time[0] + Math.random() * (el.time[1] - el.time[0]) });
     }
   }
@@ -35,8 +40,8 @@ export function createAmbience({ ambience, visible }) {
       }
       if (best && best.name !== current?.name) { current = best; enter(best); }
     }
-    for (const l of loops) { const v = (l.el.volume[0] + l.el.volume[1]) / 2; l.h.then((h) => h.setGain(l.pos ? v * far(l.pos, l.el.reach) : v)); }
-    for (const f of fixed) f.h.then((h) => h.setGain(f.a.everywhere ? f.a.volume : f.a.volume * far(f.a.o, f.a.reach)));
+    for (const l of loops) if (l.h.handle) { const v = (l.el.volume[0] + l.el.volume[1]) / 2; l.h.handle.setGain(l.pos ? v * far(l.pos, l.el.reach) : v); }
+    for (const f of fixed) if (f.h.handle) f.h.handle.setGain(f.a.everywhere ? f.a.volume : f.a.volume * far(f.a.o, f.a.reach));
     for (const r of randoms) {
       if (now < r.next) continue;
       r.next = now + r.el.time[0] + Math.random() * (r.el.time[1] - r.el.time[0]);

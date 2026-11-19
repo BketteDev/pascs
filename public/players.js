@@ -5,6 +5,7 @@ import { trace, TICK } from './physics.js';
 import { createRagdoll, stepRagdoll, ragdollPose } from './ragdoll.js';
 import { HITGROUP_MULT, WEAPONS } from './weapon-defs.js';
 import { createIncendiaryModel } from './incendiary-model.js';
+import { createRocketModel, loadRocketModels } from './rocket-model.js';
 import { agentsFor, AGENT_NAMES } from './agents.js';
 
 const skinnedVertex = `
@@ -53,7 +54,7 @@ const mul34 = (a, ai, b, bi, o, oi) => {
 const toThree = (m, i, e) => { for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) e[c * 4 + r] = m[i + r * 4 + c]; e[3] = e[7] = e[11] = 0; e[15] = 1; };
 
 export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, gain, play, fog, light, skyBrush, fogGlsl, getMyTeam, getMyId, mapName }) {
-  const [info, bin] = await Promise.all([fetch('players/players.json').then((r) => r.json()), fetch('players/players.bin').then((r) => r.arrayBuffer())]);
+  const [info, bin] = await Promise.all([fetch('players/players.json').then((r) => r.json()), fetch('players/players.bin').then((r) => r.arrayBuffer()), loadRocketModels(loadTex)]);
   const canon = new Map(info.bones.map((n, i) => [n, i]));
   const views = new Map(); // byte offset -> Float32Array(frames * bones * 7): the upper-body layer poses and gesture clips (tools/players.mjs)
   const view = (o, frames = 1) => views.get(o) ?? views.set(o, new Float32Array(bin, o, info.bones.length * 7 * frames)).get(o);
@@ -104,11 +105,18 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
   const makeShadow = () => { const m = new THREE.Mesh(shadowGeo, shadowMat.clone()); worldRoot.add(m); return m; }; // own material: own opacity
   // The blob shadow lies on the ground under `p` (traced down, tilted to the slope), shrinks and fades as the player rises (jumps, ledges),
   // and is stronger in sunlight than in shade.
-  const UP = new THREE.Vector3(0, 0, 1), groundN = new THREE.Vector3();
-  function placeShadow(bot, p) {
+  const UP = new THREE.Vector3(0, 0, 1), groundN = new THREE.Vector3(), VX = new THREE.Vector3(1, 0, 0), V_TMP = new THREE.Vector3();
+  function placeShadow(bot, p, force = false) {
+    const lp = bot.lastSh;
+    if (!force && lp && Math.abs(p[0] - lp[0]) < 0.5 && Math.abs(p[1] - lp[1]) < 0.5 && Math.abs(p[2] - lp[2]) < 0.5) {
+      if (bot.shadow.visible) bot.shadow.material.opacity = bot.shK * (0.35 + 0.65 * bot.sunVis.value);
+      return;
+    }
+    bot.lastSh = [p[0], p[1], p[2]];
     const r = trace(world, [p[0], p[1], p[2] + 4], [p[0], p[1], p[2] - 200], [-12, -12, 0], [12, 12, 1]); // the player's footprint, against everything they can stand on (player clips too): on a ledge it finds the ledge, not the floor below
-    if (!r.normal) { bot.shadow.visible = false; return; }
+    if (!r.normal) { bot.shadow.visible = false; bot.shK = 0; return; }
     const k = Math.max(0, 1 - Math.max(p[2] - r.end[2], 0) / 160), sh = bot.shadow;
+    bot.shK = k;
     sh.visible = k > 0.02; sh.position.set(r.end[0], r.end[1], r.end[2] + 0.4);
     sh.quaternion.setFromUnitVectors(UP, groundN.set(r.normal[0], r.normal[1], r.normal[2]));
     sh.scale.setScalar(0.65 + 0.35 * k); sh.material.opacity = k * (0.35 + 0.65 * bot.sunVis.value);
@@ -139,11 +147,13 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
   // swap the weapon in their hand: the world model is bone-merged onto the hand (skin()), the upper-body pose follows its class (pose())
   function setHeldWeapon(bot, key) {
     const fire = WEAPONS[key]?.grenade === 'fire';
-    if ((!info.weapons[key] && !fire) || bot.weaponKey === key) return;
+    const rocket = key === 'rocket';
+    if ((!info.weapons[key] && !fire && !rocket) || bot.weaponKey === key) return;
     for (const m of bot.wbones.meshes) bot.group.remove(m);
     bot.fireHand = null;
-    if (fire) {
-      const socket = new THREE.Group(), model = createIncendiaryModel(key);
+    if (fire || rocket) {
+      const socket = new THREE.Group(), model = rocket ? createRocketModel() : createIncendiaryModel(key);
+      if (rocket) model.rotation.z = Math.PI / 2;
       model.applyMatrix4(fireGrip); socket.add(model);
       socket.matrixAutoUpdate = false; socket.visible = !bot.dead; bot.group.add(socket);
       const wbones = []; wbones.meshes = [socket];
@@ -170,7 +180,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     worldRoot.remove(bot.group); worldRoot.remove(bot.shadow);
     byId.delete(bot.id); bots.splice(bots.indexOf(bot), 1);
   }
-  const revive = (bot) => { bot.wbones.meshes.forEach((m) => { m.visible = bot.team !== 'h'; }); Object.assign(bot, { ragdoll: null, dead: false, anim: 'idle', phase: 0, fade: null, gait: 'idle', air: 0 }); };
+  const revive = (bot) => { bot.wbones.meshes.forEach((m) => { m.visible = bot.team !== 'h'; }); Object.assign(bot, { ragdoll: null, dead: false, anim: 'idle', phase: 0, fade: null, gait: 'idle', air: 0, lastSh: null, nextTrace: 0 }); };
 
   // Snapshot interpolation on the server's clock. Every snapshot carries its tick; we track how far behind our clock the server's runs
   // (the smallest arrival offset seen, drifting slowly, so one late packet does not move it) and draw everyone a little behind that.
@@ -283,7 +293,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     const a = anims[bot.anim], rate = a.loop && bot.blend && bot.authored ? Math.min(Math.max(bot.speed / bot.authored, 0.5), 2.2) : 1;
     bot.phase = a.loop ? (bot.phase + dt * a.fps * rate) % a.frames : Math.min(bot.phase + dt * a.fps, a.frames - 1);
   }
-  const P2 = [0, 0, 0], Q2 = [0, 0, 0, 0], PA = [0, 0, 0], QA = [0, 0, 0, 0], ROW = new Float32Array(7);
+  const P2 = [0, 0, 0], Q2 = [0, 0, 0, 0], PA = [0, 0, 0], QA = [0, 0, 0, 0], P0 = [0, 0, 0], Q0 = [0, 0, 0, 0], ROW = new Float32Array(7);
   // One upper-body layer onto a bone (Source SlerpBones): an override slerps toward the layer's pose by its bone weight; a delta layer
   // (STUDIO_DELTA | STUDIO_POST) is post-multiplied, scaled by the weight: q = q * delta^w, p += delta.p * w.
   function layer(D, o, w, add, p, q) {
@@ -325,7 +335,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     const crouched = bot.upState === 'crouch' || bot.upState === 'cwalk', shot = U && (crouched ? U.cshoot ?? U.shoot : U.shoot);
     const sf = shot && bot.shotAt != null ? (performance.now() / 1000 - bot.shotAt) * shot.fps : -1, shotData = sf >= 0 && sf < shot.frames - 1 && view(shot.data, shot.frames);
     const W = bot.world, t = bot.tmp, bones = bot.def.bones;
-    const q = [0, 0, 0, 0], p = [0, 0, 0];
+    const q = Q0, p = P0;
     for (let i = 0; i < bones.length; i++) {
       const ci = bot.map[i];
       if (ci < 0) { quatMatrix(bones[i].quat, bones[i].pos, t, 0); }
@@ -345,7 +355,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
         }
         if (cur) { // upper body: how this weapon is held for the gait, aimed where they look; gait changes cross-fade
           if (prev) {
-            PA.splice(0, 3, ...p); QA.splice(0, 4, ...q);
+            PA[0] = p[0]; PA[1] = p[1]; PA[2] = p[2]; QA[0] = q[0]; QA[1] = q[1]; QA[2] = q[2]; QA[3] = q[3];
             upperStack(prev, ci, pitchRow, PA, QA); upperStack(cur, ci, pitchRow, p, q);
             const sg = QA[0] * q[0] + QA[1] * q[1] + QA[2] * q[2] + QA[3] * q[3] < 0 ? -1 : 1;
             for (let k = 0; k < 3; k++) p[k] = PA[k] + (p[k] - PA[k]) * uk;
@@ -391,29 +401,38 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
   function update(now, eye) {
     const dt = Math.min(lastNow ? now - lastNow : 0, 0.1); lastNow = now;
     syncBots(now, dt); stepBlood(dt); stepShots(dt);
+    const traceDue = (bot) => now >= (bot.nextTrace ?? 0);
     for (const bot of bots) {
       bot.friendly = bot.team === getMyTeam(); if (bot.friendly || bot.team === 'h') bot.spotted = true; // hostages: always on the radar
       const hidden = bot.id === spectatedId;
       bot.group.visible = !hidden;
       if (bot.ragdoll) { // simulated in world space: the group stays at the identity
-        stepRagdoll(bot.ragdoll, dt);
-        ragdollPose(bot.ragdoll, bot.def.bones, bot.world);
-        bot.group.position.set(0, 0, 0); bot.group.rotation.set(0, 0, 0);
-        skin(bot);
-        const pv = bot.ragdoll.P[0];
-        bot.sunVis.value += (sunVisible(pv) - bot.sunVis.value) * Math.min(1, dt * 12); // every frame: the shadow stays under the body
-        placeShadow(bot, pv);
+        if (!bot.ragdoll.baked) {
+          stepRagdoll(bot.ragdoll, dt);
+          ragdollPose(bot.ragdoll, bot.def.bones, bot.world);
+          bot.group.position.set(0, 0, 0); bot.group.rotation.set(0, 0, 0);
+          skin(bot);
+          const pv = bot.ragdoll.P[0];
+          if (traceDue(bot)) { bot.nextTrace = now + 0.08; bot.sunTarget = sunVisible(pv); }
+          bot.sunVis.value += ((bot.sunTarget ?? 1) - bot.sunVis.value) * Math.min(1, dt * 12);
+          placeShadow(bot, pv);
+          if (bot.ragdoll.time > 4) bot.ragdoll.baked = true;
+        }
         if (hidden) bot.shadow.visible = false;
         continue;
       }
-      if (!bot.dead && !bot.friendly) { // radar: an enemy shows while it has a clear line of sight to us
-        const head = [bot.origin[0], bot.origin[1], bot.origin[2] + 64];
-        bot.spotted = trace(world, head, eye, [0, 0, 0], [0, 0, 0], bulletLimit).fraction === 1;
+      if (traceDue(bot)) {
+        bot.nextTrace = now + 0.08 + (bot.id % 4) * 0.005; // ~12 Hz staggered across bots: cuts 4000-unit map traces by >90%
+        bot.sunTarget = sunVisible(bot.origin);
+        if (!bot.dead && !bot.friendly) {
+          const head = [bot.origin[0], bot.origin[1], bot.origin[2] + 64];
+          bot.spotted = trace(world, head, eye, [0, 0, 0], [0, 0, 0], bulletLimit).fraction === 1;
+        }
       }
       bot.group.position.set(bot.origin[0], bot.origin[1], bot.origin[2]);
       bot.group.rotation.set(0, 0, bot.yaw);
       advance(bot, dt); pose(bot, now);
-      bot.sunVis.value += (sunVisible(bot.origin) - bot.sunVis.value) * Math.min(1, dt * 12); // light + shadow follow the player every frame
+      bot.sunVis.value += ((bot.sunTarget ?? 1) - bot.sunVis.value) * Math.min(1, dt * 12);
       placeShadow(bot, bot.origin);
       if (hidden) bot.shadow.visible = false;
     }
@@ -498,7 +517,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     m.material = decalMats[(Math.random() * decalMats.length) | 0]; m.visible = true;
     splatNext = (splatNext + 1) % 48;
     m.position.set(at[0] + nrm[0] * 0.2, at[1] + nrm[1] * 0.2, at[2] + nrm[2] * 0.2);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(nrm[0], nrm[1], nrm[2])); m.rotateZ(Math.random() * 6.28);
+    m.quaternion.setFromUnitVectors(UP, V_TMP.set(nrm[0], nrm[1], nrm[2])); m.rotateZ(Math.random() * 6.28);
     m.scale.set(size * (Math.random() < 0.5 ? -1 : 1), size, 1); // mirrored half the time: more variety from the one texture
   }
   const clearDecals = (box) => { for (const m of splats) if (!box || m.position.toArray().every((v, k) => v >= box[0][k] && v <= box[1][k])) m.visible = false; }; // new round / broken window
@@ -531,7 +550,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     let tr = tracers.find((x) => !x.mesh.visible);
     if (!tr) { tr = { mesh: new THREE.Mesh(tracerGeo, tracerMat) }; tr.mesh.frustumCulled = false; worldRoot.add(tr.mesh); tracers.push(tr); }
     Object.assign(tr, { from, dir: d.map((v) => v / len), len, at: 0 }); tr.mesh.visible = true;
-    tr.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), new THREE.Vector3(...tr.dir));
+    tr.mesh.quaternion.setFromUnitVectors(VX, V_TMP.set(tr.dir[0], tr.dir[1], tr.dir[2]));
     if (ev.hit) { blood(ev.to, tr.dir, 10, 240); return; } // a bot's bullet that hit someone (players' own hits are drawn by their own client)
     const hit = trace(world, from, [ev.to[0] + tr.dir[0] * 4, ev.to[1] + tr.dir[1] * 4, ev.to[2] + tr.dir[2] * 4], [0, 0, 0], [0, 0, 0], bulletLimit);
     if (hit.normal && !hit.startSolid) onImpact(hit.end, hit.normal); // bullet hole where it struck a wall
@@ -601,6 +620,10 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
           const geo = geometryFor(m);
           geo.computeBoundingBox(); box.union(tmp.copy(geo.boundingBox));
           inner.add(new THREE.Mesh(geo, dropMat(m.tex)));
+        }
+        if (d.w === 'rocket') {
+          inner.add(createRocketModel());
+          box.setFromObject(inner);
         }
         const c = box.getCenter(new THREE.Vector3()), lift = (box.max.x - box.min.x) * 0.5 + 1.5;
         inner.rotation.y = Math.PI / 2;

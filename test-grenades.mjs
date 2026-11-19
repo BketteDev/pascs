@@ -9,6 +9,7 @@ import { fireCells, fireTouches, smokeExtinguishes } from './public/fire-physics
 import { GRENADE, BUY, WEAPONS, canCarryGrenade } from './public/weapon-defs.js';
 import { createGame } from './server/game.mjs';
 import { createIncendiaryModel } from './public/incendiary-model.js';
+import { createRocketModel } from './public/rocket-model.js';
 import { createGrenades } from './public/grenades.js';
 import * as THREE from 'three';
 
@@ -54,6 +55,19 @@ try {
   globalThis.fetch = async (name) => new Response(fs.readFileSync(path.join(import.meta.dirname, 'public', name)));
   const loadTex = (name, apply) => { const texture = new THREE.Texture(); texture.name = name; apply(texture); };
   const root = new THREE.Group(), effects = await createGrenades({ worldRoot: root, loadTex });
+  assert.equal(createRocketModel().children.length, 2, 'ZIP launcher world meshes are loaded');
+  assert.equal(createRocketModel(true).children.length, 1, 'ZIP missile mesh is loaded');
+  const missileBounds = new THREE.Box3().setFromObject(createRocketModel(true)).getSize(new THREE.Vector3());
+  assert(missileBounds.x > missileBounds.y * 3, 'missile is aligned with its flight axis');
+  const rocketAssets = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'public/weapons/weapons.json'))).rocket;
+  const rocketBin = fs.readFileSync(path.join(import.meta.dirname, 'public/weapons/rocket.bin'));
+  assert(rocketAssets.meshes.every((m) => m.tex && fs.existsSync(path.join(import.meta.dirname, 'public/weapons/tex', m.tex))), 'all RPG-7 viewmodel textures exist');
+  for (const activity of ['ACT_VM_IDLE', 'ACT_VM_DRAW', 'ACT_VM_PRIMARYATTACK', 'ACT_VM_RELOAD']) {
+    const seq = rocketAssets.sequences.find((s) => s.activity === activity);
+    assert(seq && seq.frames > 0 && seq.fps > 0, 'RPG-7 animation: ' + activity);
+    const matrix = new Float32Array(rocketBin.buffer, rocketBin.byteOffset + seq.skin, seq.frames * rocketAssets.bones * 12);
+    assert(matrix.every(Number.isFinite), 'finite RPG-7 animation matrices');
+  }
   for (const key of ['molotov', 'incgrenade']) {
     const model = createIncendiaryModel(key);
     assert.equal(model.scale.x, key === 'molotov' ? 1 / 3 : 1);
@@ -109,6 +123,31 @@ try {
   const money = thrower.money; t.send({ t: 'buy', item: 'molotov' }); assert.equal(thrower.money, money, 'duplicate rejected without spending');
   t.send({ t: 'throw', w: 'molotov', power: 0.25 }); assert.equal(thrower.gr.molotov, 1, 'cannot throw during freeze');
   advance(5.1);
+  t.send({ t: 'buy', item: 'rocket' });
+  assert(thrower.owned.has('rocket') && thrower.weapon === 'rocket', 'RPG is buyable as a primary weapon');
+  assert.equal(thrower.gr.rocket, undefined, 'RPG does not consume grenade capacity');
+  t.send({ t: 'weapon', w: 'knife' });
+  t.send({ t: 'fire', w: 'rocket' }); advance(0.02);
+  assert.equal(t.last.gr.filter((g) => g.w === 'rocket').length, 0, 'RPG must be equipped');
+  t.send({ t: 'weapon', w: 'rocket' });
+  Object.assign(thrower.p, { o: [0, 0, 1], yaw: 0, pitch: -0.065 });
+  enemy.p.o = [260, 0, 1]; enemy.health = 100; enemy.armor = 0;
+  friendly.p.o = [260, 50, 1];
+  t.send({ t: 'fire', w: 'rocket' }); t.send({ t: 'fire', w: 'rocket' });
+  advance(0.08);
+  assert.equal(t.last.gr.filter((g) => g.w === 'rocket' && g.dir[0] > 0.99).length, 1);
+  assert(thrower.owned.has('rocket'), 'the launcher remains available for reloading');
+  advance(0.25);
+  assert.equal(t.events.filter((e) => e.e === 'explode' && e.w === 'rocket').length, 1);
+  assert(t.events.some((e) => e.e === 'death' && e.w === 'rocket' && e.killer === thrower.id));
+  assert.equal(friendly.health, 100, 'no friendly rocket damage');
+  thrower.p.pitch = 1.3; t.events.length = 0;
+  t.send({ t: 'fire', w: 'rocket' }); advance(0.02);
+  assert.equal(t.events.filter((e) => e.e === 'shot' && e.w === 'rocket').length, 0, 'server blocks firing before reload');
+  advance(WEAPONS.rocket.reload);
+  t.send({ t: 'fire', w: 'rocket' }); advance(0.02);
+  assert.equal(t.events.filter((e) => e.e === 'shot' && e.w === 'rocket').length, 1, 'RPG can fire again after reload');
+  Object.assign(enemy, { alive: true, health: 100 });
   function throwFire() {
     thrower.p.o = [0, 0, 1]; thrower.p.v = [0, 0, 0]; thrower.p.yaw = 0; thrower.p.pitch = -1.3;
     thrower.alive = true; thrower.health = 100; thrower.gr.molotov = 1; thrower.owned.add('molotov');
@@ -194,8 +233,18 @@ try {
       advance(0.45);
       assert.equal(botCt.ai.enemy, actorBot.id, 'bot sees the exposed player');
       assert(!botFired(), 'bot waits before firing at a newly visible player');
-      advance(0.5);
+      advance(0.55);
+      assert(!botFired(), 'easy bot gives the player at least one second to react');
+      assert.equal(botCt.ai.head, false, 'easy bot aims for the torso');
+      advance(0.65);
       assert(botFired(), 'bot returns fire after its reaction delay');
+      botCt.weapon = 'rocket'; botCt.owned = new Set(['rocket']); botCt.ai.ammo = {}; botCt.ai.nextShot = 0;
+      if (otherCt) otherCt.alive = false;
+      actorBot.health = 100; cBot.events.length = 0;
+      advance(0.08);
+      assert(cBot.events.some((e) => e.e === 'shot' && e.id === botCt.id && e.w === 'rocket'), 'bot fires a recovered RPG');
+      assert(cBot.last.gr.some((g) => g.w === 'rocket' && g.dir), 'bot RPG launches a projectile');
+      assert.equal(actorBot.health, 100, 'bot RPG does not deal instant hitscan damage');
     } finally { Math.random = originalRandom; }
   } finally {
     botGame.stop();

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import assert from 'assert';
-import { Player, makeWorld, TICK } from './public/physics.js';
+import { Player, makeWorld, trace, TICK } from './public/physics.js';
 const T = (sec) => Math.round(sec / TICK); // tests are written in seconds so they hold at any tick rate
 
 const world = JSON.parse(fs.readFileSync('public/maps/de_dust2/world.json', 'utf8'));
@@ -30,34 +30,42 @@ for (const team of ['ct', 't']) {
 { const p = field(); run(p, T(0.3), { duck: true }); assert(!p.ducked && p.ducking, 'still ducking at 0.3s'); run(p, T(0.15), { duck: true }); assert(p.ducked && p.eyeZ === 47, 'ducked at 0.45s');
   run(p, T(0.15), {}); assert(p.ducked, 'still crouched at 0.15s'); run(p, T(0.075), {}); assert(!p.ducked && p.eyeZ === 64, 'standing at 0.225s'); }
 
-// 4. standing jump: apex ~ 57 units (minus Source's double half-gravity step quirk), and holding space never auto-rehops
+// 4. standing jump: apex ~ 57 units, and holding space auto-rehops on landing
 { const p = field(); let top = 0, jumps = 0, was = true;
   for (let i = 0; i < T(3); i++) { p.tick({ jump: true }); top = Math.max(top, p.o[2]); if (was && !p.onGround) jumps++; was = p.onGround; }
-  console.log('jump apex', top.toFixed(1), 'jumps while holding space', jumps);
-  assert(top > 45 && top < 58, 'apex ' + top); assert(jumps === 1, 'no autohop, got ' + jumps); }
+  console.log('jump apex', top.toFixed(1), 'auto-hops while holding space', jumps);
+  assert(top > 45 && top < 58, 'apex ' + top); assert(jumps >= 3, 'autohop should rehop on landing, got ' + jumps); }
 
-// 5. bunnyhop: press only on the landing tick. Takeoff speed is cropped to 1.1*250 = 275, air strafing builds past it,
-//    and jump stamina makes consecutive hops lower.
+// 5. bunnyhop: holding jump + air strafing builds impressive speed smoothly (sv_autobunnyhopping 1 + high airaccel)
 { const p = field(); let hops = 0, peak = 0, maxTakeoff = 0, vz = [];
-  for (let i = 0; i < T(22); i++) {
-    const jump = p.onGround; // press exactly when grounded; released while airborne
-    const s = hs(p), th = Math.acos(Math.min(1, 27 / Math.max(s, 27))), va = s > 1 ? Math.atan2(p.v[1], p.v[0]) : 0.3;
+  for (let i = 0; i < T(10); i++) {
+    const s = hs(p), th = Math.acos(Math.min(1, 32 / Math.max(s, 32))), va = s > 1 ? Math.atan2(p.v[1], p.v[0]) : 0.3;
     p.yaw = Math.atan2(Math.cos(va + th), -Math.sin(va + th)); // optimal strafe angle (wishdir = (sin yaw, -cos yaw) for side=+1)
-    const before = p.onGround; p.tick({ side: 1, jump });
+    const before = p.onGround; p.tick({ side: 1, jump: true });
     if (before && !p.onGround) { hops++; maxTakeoff = Math.max(maxTakeoff, hs(p)); vz.push(p.v[2]); }
     peak = Math.max(peak, hs(p));
   }
   console.log('bhop hops', hops, 'peak air speed', peak | 0, 'max takeoff speed', maxTakeoff | 0, 'takeoff vz first/second', vz[0] | 0, vz[1] | 0);
-  assert(hops > 10); assert(maxTakeoff <= 276.5, 'takeoff cap ' + maxTakeoff); assert(peak > 280, 'strafing should beat the cap in the air: ' + peak);
-  assert(vz[1] < vz[0] * 0.95, 'stamina should lower consecutive hops'); }
+  assert(hops >= 8); assert(peak > 300 && peak < 430, 'bhop should build controlled speed: ' + peak);
+  assert(maxTakeoff <= 365, 'takeoff soft cap ' + maxTakeoff);
+  assert(Math.abs(vz[1] - vz[0]) < 1, 'consecutive hops keep full jump height without stamina penalty'); }
 
-// 6. stamina: walking right after a jump is slowed
-{ const p = field(); run(p, T(1.5), { fwd: 1 }); const before = hs(p); run(p, 1, { fwd: 1, jump: true }); assert(p.stamina > 1000, 'stamina set'); }
+// 6. casual hold-W + Space bhop still builds noticeable momentum over 250 u/s
+{ const p = field(); p.yaw = 0; run(p, T(0.8), { fwd: 1 }); run(p, T(4), { fwd: 1, jump: true });
+  assert(hs(p) > 270 && hs(p) <= 311, 'casual hold-space bhop should add modest speed: ' + hs(p)); }
+{ const p = field(); p.yaw = 0; run(p, T(6), { fwd: 1, jump: true });
+  assert(hs(p) > 230, 'jumping from a standstill should also build speed: ' + hs(p)); }
 
 // 7. no tunneling when falling fast
 { const p = new Player(makeWorld([floor]), [0, 0, 600]); run(p, T(4.5), {}); assert(p.onGround && Math.abs(p.o[2]) < 0.2, 'landed at ' + p.o[2]); }
 
 // 8. embedded in solid: pops out instead of freezing
 { const p = new Player(makeWorld([floor]), [0, 0, -6]); run(p, 8, {}); assert(p.o[2] >= -0.5 && p.onGround, 'unstuck ' + p.o[2]); }
+
+// A long-running world must still see entries stamped before the trace counter wrapped.
+{ const w = makeWorld([floor]), zero = [0, 0, 0];
+  assert.equal(trace(w, [0, 0, 8], [0, 0, -8], zero, zero).entry, 0);
+  w.tick = 0xffffffff;
+  assert.equal(trace(w, [0, 0, 8], [0, 0, -8], zero, zero).entry, 0); }
 
 console.log('physics ok (tick', TICK, 's)');

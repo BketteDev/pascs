@@ -25,7 +25,7 @@ const rad = Math.PI / 180;
 
 export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer = BOMB.timer, botsFight = true, range = false, maxPlayers = null, bots: botsOn = true }) { // bots: false = humans only (no bots fill the teams) // range: shooting-range mode (no rounds, target bots)
   const worldJson = JSON.parse(fs.readFileSync(path.join(mapDir, 'world.json'), 'utf8'));
-  const world = makeWorld(worldJson.collision.concat(worldJson.playerOnly ?? []));
+  const world = makeWorld(worldJson.collision.concat(worldJson.playerOnly ?? []), worldJson.ladders);
   const bulletLimit = worldJson.collision.length;
   const movers = createMovers(world, worldJson.movers); // doors + breakable glass (entries inside world.collision)
   const spawns = {};
@@ -96,11 +96,12 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const pool = spawns[ent.team].filter((s) => !taken.some((o) => Math.hypot(o[0] - s.o[0], o[1] - s.o[1]) < 40));
     const rs = ent.hostage ? spawns.h[ent.hostage.home] : range && ent.bot ? rangeSpot(ent) : null;
     const s = rs ?? (pool.length ? pool : spawns[ent.team])[Math.floor(Math.random() * (pool.length || spawns[ent.team].length))];
-    Object.assign(ent.p, { velMod: 1, o: [...s.o], v: [0, 0, 0], yaw: s.yaw, pitch: 0, ducked: false, ducking: false, ducktime: 0, eyeZ: 64, stamina: 0, oldJump: false, oldDuck: false, onGround: false });
+    Object.assign(ent.p, { velMod: 1, o: [...s.o], v: [0, 0, 0], yaw: s.yaw, pitch: 0, ducked: false, ducking: false, ducktime: 0, eyeZ: 64, stamina: 0, oldJump: false, oldDuck: false, onGround: false, onLadder: false, ladderCooldown: 0, ladderNormal: null });
     ent.p.prev = { o: [...s.o], eyeZ: 64 };
     ent.p.maxSpeed = ent.hostage ? 250 : WEAPONS[ent.weapon].speed;
     if (ent.hostage) Object.assign(ent.hostage, { leader: 0, path: null, stuck: 0 });
     ent.stepTimer = 0; ent.alive = true; ent.hasSpawned = true; ent.health = 100; ent.planting = ent.defusing = null; ent.queue.length = 0;
+    ent.blindUntil = 0; ent.flashedBy = 0; ent.dmgBy = new Map(); ent.hitTok = 0;
     if (ent.ai) Object.assign(ent.ai, { path: null, stuck: 0, enemy: 0, threat: 0, shots: 0, nextShot: 0, ammo: {}, reloadUntil: 0, blindUntil: 0 });
   }
   const humans = () => [...ents.values()].filter((e) => !e.bot);
@@ -407,12 +408,18 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   const angTo = (a, b) => ((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
   const eyeOf = (e) => e.p.eye, headOf = (e) => [e.p.o[0], e.p.o[1], e.p.o[2] + (e.p.ducked ? 46 : 63)], chestOf = (e) => [e.p.o[0], e.p.o[1], e.p.o[2] + (e.p.ducked ? 30 : 44)];
   const clear = (a, b) => trace(world, a, b, ZERO, ZERO, bulletLimit).fraction > 0.995;
-  const smokeBlocks = (a, b) => smokes.some((m) => { // segment vs smoke ball, once it has bloomed
-    if (m.age < 1 || m.age > GRENADE.smokeTime - 1) return false;
-    const c = [m.o[0], m.o[1], m.o[2] + 60], d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l2 = d[0] ** 2 + d[1] ** 2 + d[2] ** 2;
-    const t = Math.max(0, Math.min(1, ((c[0] - a[0]) * d[0] + (c[1] - a[1]) * d[1] + (c[2] - a[2]) * d[2]) / (l2 || 1)));
-    return Math.hypot(a[0] + d[0] * t - c[0], a[1] + d[1] * t - c[1], a[2] + d[2] * t - c[2]) < GRENADE.smokeRadius * 0.9;
-  });
+  function smokeBlocks(a, b) {
+    if (!smokes.length) return false;
+    const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], lenSq = dx * dx + dy * dy + dz * dz || 1;
+    const radiusSq = (GRENADE.smokeRadius * 0.9) ** 2;
+    for (const m of smokes) {
+      if (m.age < 1 || m.age > GRENADE.smokeTime - 1) continue;
+      const x = m.o[0] - a[0], y = m.o[1] - a[1], z = m.o[2] + 60 - a[2];
+      const t = Math.max(0, Math.min(1, (x * dx + y * dy + z * dz) / lenSq));
+      if ((dx * t - x) ** 2 + (dy * t - y) ** 2 + (dz * t - z) ** 2 < radiusSq) return true;
+    }
+    return false;
+  }
   function spot(bot, now) {
     const ai = bot.ai, eye = eyeOf(bot), fwd = [Math.cos(bot.p.yaw), Math.sin(bot.p.yaw)];
     if (now < (ai.blindUntil ?? 0)) return 0;
@@ -460,13 +467,14 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     am.mag--; ai.shots++;
     const longRange = dist > 900 && w.auto;
     ai.nextShot = now + w.cycle + (!w.auto ? 0.12 + Math.random() * 0.15 : 0); // semi-autos are tapped
+    if (w.projectile) { fired(bot, { w: bot.weapon }); return; }
     if (longRange && ai.shots >= 2 + (Math.random() * 3 | 0)) { ai.nextShot = now + 0.35 + Math.random() * 0.25; ai.burstEnd = true; } // bursts at range
     // recoil: the fixed CS pattern (or a flat kick), about half of it controlled
     let pu = [0, 0];
     if (w.recoil.type === 'kickback') { const pt = w.recoil.pts[Math.min(ai.shots - 1, w.recoil.pts.length - 1)]; pu = [pt[0] * 0.5, pt[1] * 0.5]; }
     else if (w.recoil.type === 'punch') pu = [Math.min(ai.shots * w.recoil.pitch * 0.3, 4), 0];
     bot_ducked = p.ducked;
-    const spread = botSpread(w, ai.shots, Math.hypot(p.v[0], p.v[1]) > 140, !p.onGround) + 0.035;
+    const spread = botSpread(w, ai.shots, Math.hypot(p.v[0], p.v[1]) > 140, !p.onGround) + 0.075;
     const yaw = p.yaw + (pu[1] * Math.PI) / 180, pitch = p.pitch + (pu[0] * Math.PI) / 180, cp = Math.cos(pitch), eye = p.eye;
     const fwd = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)], right = [Math.sin(yaw), -Math.cos(yaw), 0], up = [-Math.sin(pitch) * Math.cos(yaw), -Math.sin(pitch) * Math.sin(yaw), Math.cos(pitch)];
     let to = null, hitAny = false;
@@ -481,7 +489,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       if (!k) continue;
       hitAny = true;
       const dmg = w.damage * Math.pow(w.rangeMod ?? 1, hit.t / 500) * HITGROUP_MULT[hit.group] * k;
-      applyDamage(hit.e, bot, dmg, bot.weapon, { group: hit.group, bone: hit.group === 1 ? 14 : 1, dir: d.map((v) => r2(v)), from: eye, wb: wall.fraction * 8192 < hit.t });
+      applyDamage(hit.e, bot, dmg, bot.weapon, { group: hit.group, bone: hit.group === 1 ? 14 : 1, dir: d.map((v) => r2(v)), from: eye, wb: wall.fraction * 8192 < hit.t, smk: smokeBlocks(eye, end) });
     }
     emit({ e: 'shot', id: bot.id, o: p.o.map(r2), w: bot.weapon, to: to.map((v) => Math.round(v)), hit: hitAny ? 1 : 0 });
   }
@@ -492,9 +500,9 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       const seen = spot(bot, now);
       if (seen && seen !== ai.enemy) { // new target: react, with an aim error that settles
         const surprised = ai.threat === seen; // we were shot by them: no time to settle, and less precise
-        ai.react = now + (surprised ? 0.4 : 0.5) + Math.random() * 0.25;
+        ai.react = now + (surprised ? 0.8 : 1.0) + Math.random() * 0.4;
         ai.err = [(Math.random() - 0.5) * (surprised ? 0.3 : 0.22), (Math.random() - 0.5) * 0.09];
-        ai.head = Math.random() < 0.1; ai.shots = 0;
+        ai.head = false; ai.shots = 0; // Easy bots aim at the torso; stray shots may still hit the head.
       }
       if (seen) { ai.enemy = seen; ai.lastSeen = now; }
       else if (now - (ai.lastSeen ?? -9) > 0.6) ai.enemy = 0; // lost them for a moment: keep aiming where they were
@@ -612,7 +620,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   }
   // CS:S armor (CCSPlayer::OnTakeDamage): kevlar covers chest, stomach, arms (and generic damage); the head only with a helmet; never the legs.
   // The weapon's ArmorRatio decides how much gets through: health takes dmg * ratio/2, the armor pays half of the rest.
-  function applyDamage(target, attacker, dmg, wKey, { group = 2, bone = 0, dir = [0, 0, 1], from = null, wb = false, bypassArmor = false } = {}) {
+  const domStreak = new Map(), dominating = new Set(); // per-pair unanswered kills for CS:GO/CS2 domination & revenge icons
+  function applyDamage(target, attacker, dmg, wKey, { group = 2, bone = 0, dir = [0, 0, 1], from = null, wb = false, smk = false, ns = false, bypassArmor = false } = {}) {
     const covered = group === 0 || group === 2 || group === 3 || group === 4 || group === 5 || (group === 1 && target.helmet);
     if (target.armor > 0 && covered && !bypassArmor) {
       let health = dmg * 0.5 * (WEAPONS[wKey]?.armor ?? 1), armorLoss = (dmg - health) * 0.5;
@@ -621,6 +630,10 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       if (target.armor <= 0) target.helmet = false;
     }
     target.health -= dmg;
+    if (attacker && attacker !== target && attacker.team !== target.team && !target.hostage) {
+      target.dmgBy ??= new Map();
+      target.dmgBy.set(attacker.id, (target.dmgBy.get(attacker.id) ?? 0) + dmg);
+    }
     if (from && WEAPONS[wKey] && !WEAPONS[wKey].grenade && wKey !== 'c4') target.p.velMod = 0.5; // tagging: shot players slow down (CS:S m_flVelocityModifier)
     if (target.ai && attacker?.p && attacker.team !== target.team) target.ai.threat = attacker.id; // bots turn on whoever shot them
     if (from && !target.bot) emit({ e: 'hurt', to: target.id, from: from.map(r2), dmg: Math.round(dmg) }); // the victim's screen: direction + aim punch
@@ -635,7 +648,40 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       if (pri) dropWeapon(target, pri, false);
       else if (sec) dropWeapon(target, sec, false);
     }
-    emit({ e: 'death', victim: target.id, killer: attacker.id, w: wKey, hs: group === 1, wb: wb ? 1 : 0, bone, dir, o: target.p.o.map(r2) });
+    const t = now(), wDef = WEAPONS[wKey], gunKill = !!wDef && !wDef.melee && !wDef.grenade && wKey !== 'c4' && wKey !== 'world';
+    const enemyKill = attacker && attacker !== target && attacker.team !== target.team && !target.hostage;
+    let assist = 0, fa = 0, dom = 0, rev = 0;
+    if (enemyKill) {
+      const flasher = t < (target.blindUntil ?? 0) && target.flashedBy && target.flashedBy !== attacker.id ? ents.get(target.flashedBy) : null;
+      if (flasher && flasher.team === attacker.team) { assist = flasher.id; fa = 1; }
+      else if (target.dmgBy?.size) {
+        let bestD = 39.9;
+        for (const [id, dealt] of target.dmgBy) {
+          if (id === attacker.id || dealt <= bestD) continue;
+          const mate = ents.get(id);
+          if (mate && mate.team === attacker.team) { bestD = dealt; assist = id; }
+        }
+      }
+      const kPair = `${attacker.id}:${target.id}`, rPair = `${target.id}:${attacker.id}`;
+      if (dominating.has(rPair)) { dominating.delete(rPair); domStreak.set(rPair, 0); rev = 1; }
+      else {
+        domStreak.set(rPair, 0);
+        const streak = (domStreak.get(kPair) ?? 0) + 1;
+        domStreak.set(kPair, streak);
+        if (streak >= 3) { dominating.add(kPair); dom = 1; }
+      }
+    }
+    const blind = enemyKill && t < (attacker.blindUntil ?? 0) ? 1 : 0;
+    const air = enemyKill && gunKill && attacker.p && !attacker.p.onGround ? 1 : 0;
+    const ev = { e: 'death', victim: target.id, killer: attacker.id, w: wKey, hs: group === 1, wb: wb ? 1 : 0, bone, dir, o: target.p.o.map(r2) };
+    if (smk) ev.smk = 1;
+    if (blind) ev.blind = 1;
+    if (ns) ev.ns = 1;
+    if (air) ev.air = 1;
+    if (assist) { ev.as = assist; if (fa) ev.fa = 1; }
+    if (dom) ev.dom = 1;
+    if (rev) ev.rev = 1;
+    emit(ev);
   }
   // ---------- hits: lag compensation + validation ----------
   // Clients report their hits (their screen is what the player aimed at) with the shot ray and the server tick they were looking at.
@@ -663,6 +709,15 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const w = WEAPONS[m.w];
     if (!ent.alive || !ent.owned.has(m.w) || !w || w.grenade || w.c4) return;
     const t = now();
+    if (w.projectile) {
+      if (ent.weapon !== m.w || round.phase !== 'live' || t < (ent.rocketAt ?? 0)) return;
+      ent.rocketAt = t + w.reload;
+      const { eye, yaw, pitch } = ent.p, cp = Math.cos(pitch);
+      const direction = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)];
+      grenades.push({ id: nextGrenade++, w: m.w, owner: ent.id, attacker: ent, team: ent.team, o: [...eye], direction, age: 0 });
+      emit({ e: 'shot', id: ent.id, o: ent.p.o.map(r2), w: m.w });
+      return;
+    }
     if (w.melee) {
       if (t - (ent.knifeSwingAt ?? -9) < 0.25) return;
       ent.knifeSwingAt = t;
@@ -676,6 +731,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     ent.fireTok = Math.min((ent.fireTok ?? 3) + (t - (ent.fireAt ?? t)) / (w.cycle * 0.9), 3); ent.fireAt = t;
     if (ent.fireTok < 1) return; // faster than the gun can fire: dropped
     ent.fireTok -= 1; ent.firedW = m.w; ent.hitUntil = t + 0.5; ent.hitTok = w.pellets ?? 1; // a shot's hits follow it in order: no banking across shots
+    ent.firedUnscoped = !!(w.scope && m.sc === 0);
     // shortcut: ammo is not tracked server-side (the bucket bounds the damage rate); add per-weapon mags if reload cheats matter
     const to = isVec(m.to) && Math.hypot(m.to[0] - ent.p.o[0], m.to[1] - ent.p.o[1], m.to[2] - ent.p.o[2]) < 8300 ? m.to : null; // visuals: tracer end
     emit({ e: 'shot', id: ent.id, o: ent.p.o.map(r2), w: m.w, to });
@@ -683,7 +739,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   }
   function hit(shooter, m) {
     const target = ents.get(m.target), w = WEAPONS[m.w];
-    if (!target || !w || !shooter.alive || !target.alive || target.team === shooter.team || !shooter.owned.has(m.w) || w.grenade) return;
+    if (!target || !w || !shooter.alive || !target.alive || target.team === shooter.team || !shooter.owned.has(m.w) || w.grenade || w.projectile) return;
     const t = now();
     if (w.melee) { if (t - (shooter.knifeAt ?? -9) < 0.3) return; shooter.knifeAt = t; } // swing rate
     else { if (shooter.firedW !== m.w || !(shooter.hitTok >= 1) || t > shooter.hitUntil) return; shooter.hitTok--; } // hits arrive right after their shot
@@ -710,7 +766,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       const behind = (fwd[0] * d2[0] + fwd[1] * d2[1]) / tl > 0.5; // the victim faces away from us
       dmg = (m.alt ? w.stab : w.damage) * (behind ? 3 : 1);
     } else dmg = w.damage * Math.pow(w.rangeMod ?? 1, tc / 500) * HITGROUP_MULT[group] * k;
-    applyDamage(target, shooter, dmg, m.w, { group, bone: Number(m.bone) || 0, dir: ray.d.map(r2), from: ray.o, wb: !w.melee && wall });
+    applyDamage(target, shooter, dmg, m.w, { group, bone: Number(m.bone) || 0, dir: ray.d.map(r2), from: ray.o, wb: !w.melee && wall, smk: !w.melee && smokeBlocks(ray.o, P), ns: !w.melee && shooter.firedUnscoped });
   }
 
   // ---------- the bomb ----------
@@ -873,10 +929,10 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     grenades.push({ id: nextGrenade++, w: m.w, owner: ent.id, attacker: ent, team: ent.team, ...start, age: 0, lastBounce: -1 });
   }
   function explode(g) {
-    const k = WEAPONS[g.w].grenade, owner = g.attacker;
+    const k = WEAPONS[g.w].projectile ?? WEAPONS[g.w].grenade, owner = g.attacker, explosive = k === 'he' || k === 'rocket';
     emit({ e: 'explode', w: g.w, o: g.o.map(r2), by: g.owner });
-    if (WEAPONS[g.w].grenade === 'he') movers.defs.forEach((d, i) => { if (d.breakable && Math.hypot(...d.center.map((v, k) => v - g.o[k])) < 300) damageMovers(g.o, d.center, 1e9); });
-    const at = [g.o[0], g.o[1], g.o[2] + 6];
+    if (explosive) movers.defs.forEach((d, i) => { if (d.breakable && Math.hypot(...d.center.map((v, k) => v - g.o[k])) < 300) damageMovers(g.o, d.center, 1e9); });
+    const at = g.direction ? g.o : [g.o[0], g.o[1], g.o[2] + 6];
     if (k === 'smoke') { smokes.push({ id: g.id, o: [...g.o], age: 0 }); return; }
     if (k === 'fire') {
       const cells = fireCells(world, bulletLimit, g.o);
@@ -886,11 +942,11 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     for (const t of ents.values()) {
       if (!t.alive) continue;
       const chest = [t.p.o[0], t.p.o[1], t.p.o[2] + 36], eye = t.p.eye;
-      if (k === 'he') {
+      if (explosive) {
         const d = Math.hypot(chest[0] - g.o[0], chest[1] - g.o[1], chest[2] - g.o[2]);
         if (d > GRENADE.heRadius || (t.team === g.team && t.id !== g.owner)) continue; // no friendly fire, but you can hurt yourself
         if (trace(world, at, chest, ZERO, ZERO, bulletLimit).fraction < 0.9) continue;
-        const dmg = GRENADE.heDamage * (1 - d / GRENADE.heRadius), dir = [chest[0] - g.o[0], chest[1] - g.o[1], chest[2] - g.o[2] + 40], dl = Math.hypot(...dir) || 1;
+        const dmg = (k === 'rocket' ? 140 : GRENADE.heDamage) * (1 - d / GRENADE.heRadius), dir = [chest[0] - g.o[0], chest[1] - g.o[1], chest[2] - g.o[2] + 40], dl = Math.hypot(...dir) || 1;
         applyDamage(t, owner, dmg, g.w, { dir: dir.map((v) => r2(v / dl)), from: g.o });
       } else {
         const d = Math.hypot(eye[0] - g.o[0], eye[1] - g.o[1], eye[2] - g.o[2]);
@@ -898,12 +954,33 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
         const cp = Math.cos(t.p.pitch), look = [cp * Math.cos(t.p.yaw), cp * Math.sin(t.p.yaw), Math.sin(t.p.pitch)];
         const facing = (look[0] * (g.o[0] - eye[0]) + look[1] * (g.o[1] - eye[1]) + look[2] * (g.o[2] - eye[2])) / (d || 1);
         const dur = 4.5 * (1 - d / GRENADE.flashRange) * (facing > 0.5 ? 1 : facing > -0.2 ? 0.6 : 0.25);
-        if (dur > 0.2) { emit({ e: 'flash', to: t.id, dur: r2(dur) }); if (t.ai) t.ai.blindUntil = tickNo * TICK + dur * 0.8; }
+        if (dur > 0.2) {
+          const until = now() + r2(dur);
+          if (until > (t.blindUntil ?? 0)) {
+            t.blindUntil = until; t.flashedBy = g.owner;
+            emit({ e: 'flash', to: t.id, dur: r2(dur) });
+          }
+          if (t.ai) t.ai.blindUntil = Math.max(t.ai.blindUntil ?? 0, now() + dur * 0.8);
+        }
       }
     }
   }
   function stepGrenade(g) { // returns false when the grenade is spent
     g.age += TICK;
+    if (g.direction) {
+      const travel = 1500 * TICK, from = g.o;
+      const to = from.map((v, i) => v + g.direction[i] * travel);
+      const r = trace(world, from, to, ZERO, ZERO, bulletLimit);
+      const body = bodyHit(g.attacker, from, g.direction);
+      if (r.startSolid || r.fraction < 1 || (body && body.t <= travel)) {
+        const dist = r.startSolid ? 0 : Math.max(0, Math.min(travel * r.fraction, body?.t ?? Infinity) - 1);
+        g.o = from.map((v, i) => v + g.direction[i] * dist);
+        explode(g);
+        return false;
+      }
+      g.o = to;
+      return g.age < 3;
+    }
     const kind = WEAPONS[g.w].grenade;
     const speed = stepFlight(world, bulletLimit, g, TICK);
     if (speed > 90 && g.age - g.lastBounce > 0.06) { g.lastBounce = g.age; emit({ e: 'bounce', w: g.w, o: g.o.map(r2) }); }
@@ -986,7 +1063,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     return true;
   }
 
-  const P_FIELDS = ['onGround', 'ducked', 'ducking', 'ducktime', 'stamina', 'oldJump', 'oldDuck', 'eyeZ', 'velMod'];
+  const P_FIELDS = ['onGround', 'ducked', 'ducking', 'ducktime', 'stamina', 'oldJump', 'oldDuck', 'eyeZ', 'velMod', 'onLadder', 'ladderCooldown', 'ladderNormal'];
   function snapshot() {
     record();
     const list = [...ents.values()].filter((e) => e.team !== 'spec').map((e) => ({
@@ -995,7 +1072,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     }));
     const rd = { winner: round.phase === 'over' ? round.winner : null, reason: round.phase === 'over' ? round.reason : null, bomb: bomb.state === 'planted' ? 1 : 0, phase: round.phase, left: r2(Math.max(round.left, 0)), scores: round.scores, number: round.number, alive: { ct: alive('ct'), t: alive('t') } };
     const bm = { s: bomb.state, o: bomb.o?.map(r2) ?? null, carrier: bomb.carrier, left: bomb.state === 'planted' ? r2(Math.max(bomb.explodeAt - now(), 0)) : 0, defusing: bomb.defuser && ents.get(bomb.defuser)?.defusing ? bomb.defuser : 0 };
-    const gr = grenades.map((g) => ({ id: g.id, w: g.w, o: g.o.map(r2) })), smk = smokes.map((m) => ({ id: m.id, o: m.o.map(r2), age: r2(m.age) }));
+    const gr = grenades.map((g) => ({ id: g.id, w: g.w, o: g.o.map(r2), ...(g.direction && { dir: g.direction }) })), smk = smokes.map((m) => ({ id: m.id, o: m.o.map(r2), age: r2(m.age) }));
     const flames = fires.map((f) => ({ id: f.id, o: f.o.map(r2), cells: f.cells.map((p) => p.map(r2)), age: r2(f.age) }));
     const drp = drops.map((d) => ({ id: d.id, w: d.w, o: d.o.map(r2), yaw: r2(d.yaw) }));
     for (const e of ents.values()) {
@@ -1040,7 +1117,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     players: () => [...ents.values()].filter((e) => !e.bot).map((e) => ({ id: e.id, name: e.name, team: e.team, ping: Math.round(e.ping), kills: e.kills })),
     kick(id) { const e = ents.get(id); if (!e || e.bot) return false; e.ws?.close(4001, 'kicked'); return true; },
     bots: botsOn,
-    connect, ents, round, tick: () => tickNo, range, hostageMode, rescueZones, teamSize, maxPlayers: maxPlayers ?? teamSize * 2, bomb, drops, inSite, sites, stats: () => ({ tickRate: TICK_RATE, ticks: ticksRun, measuredHz: ticksRun / ((performance.now() - started) / 1000), entities: ents.size, humans: humans().length }),
+    connect, ents, round, tick: () => tickNo, range, hostageMode, rescueZones, teamSize, maxPlayers: maxPlayers ?? teamSize * 2, bomb, drops, smokes, inSite, sites, stats: () => ({ tickRate: TICK_RATE, ticks: ticksRun, measuredHz: ticksRun / ((performance.now() - started) / 1000), entities: ents.size, humans: humans().length }),
     stop() { running = false; clearInterval(timer); },
   };
 }

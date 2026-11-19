@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import {EventEmitter} from 'node:events';
+import {createGame} from './server/game.mjs';
+import {WEAPONS,BUY_TIME} from './public/weapon-defs.js';
+const savedDocument=globalThis.document,savedAdd=globalThis.addEventListener;
+const listeners={},events={},sent=[];
+const el={style:{},classList:{add(){},remove(){}},addEventListener:(n,fn)=>events[n]=fn,querySelector:()=>({getBoundingClientRect:()=>({left:0,top:0,width:660})})};
+globalThis.document={pointerLockElement:null,getElementById:()=>el,fonts:{check:()=>false,load:()=>Promise.resolve()},createElement:()=>({getContext:()=>({})}),addEventListener(){}};
+globalThis.addEventListener=(n,fn)=>listeners[n]=fn;
+const game=createGame({mapDir:path.join(import.meta.dirname,'public/maps/de_dust2'),bots:false,teamSize:2});
+const ws=new EventEmitter();ws.readyState=1;ws.ping=()=>ws.emit('pong');let snap;
+ws.send=raw=>{const m=JSON.parse(raw);if(m.t==='snap')snap=m;};
+const send=m=>{sent.push(m);ws.emit('message',JSON.stringify(m));};
+try {
+  assert(game.connect(ws));send({t:'join',name:'Buy regression',team:'ct'});
+  const ent=[...game.ents.values()].find(e=>e.ws===ws);
+  const {createBuyMenu}=await import('./public/buy.js');
+  const menu=createBuyMenu({net:{send},getState:()=>({team:ent.team,money:ent.money,armor:ent.armor,owned:[...ent.owned],gr:ent.gr}),canOpen:()=>true});
+  const clickRocket=()=>{menu.open();listeners.keydown({code:'Digit2',preventDefault(){},stopPropagation(){}});events.click({clientX:158,clientY:330,stopPropagation(){}});};
+  assert.equal(WEAPONS.rocket.price,6000);
+  ent.money=WEAPONS.rocket.price-1;clickRocket();assert(!sent.some(m=>m.t==='buy'),'unaffordable click sends no purchase');
+  ent.money=WEAPONS.rocket.price;game.round.phase='live';game.round.elapsed=BUY_TIME+1;clickRocket();assert(!ent.owned.has('rocket')&&ent.money===WEAPONS.rocket.price,'expired buy time remains enforced');
+  game.round.phase='freeze';clickRocket();
+  assert(sent.some(m=>m.t==='buy'&&m.item==='rocket'),'actual RPG wedge click sends the purchase');
+  assert(ent.owned.has('rocket')&&ent.weapon==='rocket'&&ent.money===0,'server buys and equips RPG at the exact price');
+  await new Promise(r=>setTimeout(r,35));
+  assert(snap.you.owned.includes('rocket')&&snap.you.weapon==='rocket'&&snap.you.money===0,'snapshot synchronizes inventory, equipment and money');
+  assert.equal(WEAPONS.rocket.slot,1);
+  console.log('buy ok: actual RPG menu click, price, buy time, server ownership/equipment and snapshot synchronization');
+} finally {game.stop();ws.readyState=3;ws.emit('close');globalThis.document=savedDocument;globalThis.addEventListener=savedAdd;}

@@ -27,9 +27,9 @@ const loadingEl = document.getElementById('loading');
 const setLoad = (pct) => { document.getElementById('loadfill').style.width = pct + '%'; }; // the loading screen is just the agent and this bar
 setLoad(5, 'Loading map...');
 const gain = Number(q.get('gain') ?? 1.0); // lightmap overbright, tweak with ?gain=
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: false, powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // Source's pipeline is gamma-space; keep all math raw
-const pixelRatio = (scale) => Math.min(devicePixelRatio, 2) * scale; // Options > Video > Render scale: fewer pixels for weaker GPUs
+const pixelRatio = (scale) => Math.min(devicePixelRatio, 1.5) * scale; // Options > Video > Render scale: cap DPR at 1.5 for smoother high-DPI FPS
 renderer.setPixelRatio(pixelRatio(loadSettings().renderScale));
 renderer.autoClear = false; // two passes: 3D skybox, then the world
 document.body.prepend(renderer.domElement);
@@ -65,7 +65,7 @@ const loadTex = (file, apply) => { // file = URL relative to the page; shared pe
         const c = document.createElement('canvas'); c.width = t.image.width >> 1; c.height = t.image.height >> 1;
         c.getContext('2d').drawImage(t.image, 0, 0, c.width, c.height); t.image = c;
       }
-      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.anisotropy = TEX_LOW ? 1 : 8;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.anisotropy = TEX_LOW ? 1 : Math.min(4, renderer.capabilities.getMaxAnisotropy());
       renderer.initTexture(t); texCache.set(file, t); waiting.forEach((fn) => fn(t)); texDone++;
     });
   } else if (Array.isArray(texCache.get(file))) texCache.get(file).push(apply);
@@ -77,12 +77,19 @@ export const FOG_GLSL = `
   uniform vec3 fogColor; uniform vec3 fogRange; varying float vDepth;
   vec3 applyFog(vec3 c) { return fogRange.y > fogRange.x ? mix(c, fogColor, clamp((vDepth - fogRange.x) / (fogRange.y - fogRange.x), 0.0, fogRange.z)) : c; }`;
 const worldVS = `
-  attribute vec2 lmuv; varying vec2 vUv; varying vec2 vLm; varying float vDepth; varying vec3 vWorld;
-  void main() { vUv = uv; vLm = lmuv; vWorld = (modelMatrix * vec4(position, 1.0)).xyz; vec4 mv = modelViewMatrix * vec4(position, 1.0); vDepth = -mv.z; gl_Position = projectionMatrix * mv; }`;
-const worldFS = `
-  uniform sampler2D map; uniform sampler2D lm; uniform float gain, cutoff, opacity; varying vec2 vUv; varying vec2 vLm; varying vec3 vWorld; ${FOG_GLSL}
+  attribute vec2 lmuv; varying vec2 vUv; varying vec2 vLm; varying float vDepth;
   #ifdef ENV
-  uniform samplerCube envMap; uniform vec3 envTint;
+  varying vec3 vWorld;
+  #endif
+  void main() { vUv = uv; vLm = lmuv;
+  #ifdef ENV
+  vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+  #endif
+  vec4 mv = modelViewMatrix * vec4(position, 1.0); vDepth = -mv.z; gl_Position = projectionMatrix * mv; }`;
+const worldFS = `
+  uniform sampler2D map; uniform sampler2D lm; uniform float gain, cutoff, opacity; varying vec2 vUv; varying vec2 vLm; ${FOG_GLSL}
+  #ifdef ENV
+  varying vec3 vWorld; uniform samplerCube envMap; uniform vec3 envTint;
   #endif
   void main() {
     vec4 t = texture2D(map, vUv); if (t.a < cutoff) discard;
@@ -119,11 +126,13 @@ function addGroups(root, groups, kind, fog = worldFog, opacity = 1) { // opacity
       defines: env ? { ENV: 1 } : {},
       uniforms: { map: { value: white }, lm: { value: lmTex }, gain: { value: gain }, cutoff: { value: g.alpha === 1 ? 0.5 : 0 }, opacity: { value: opacity }, ...fog, ...(env ? { envMap: skyCube, envTint: { value: new THREE.Vector3(...g.env) } } : {}) },
       vertexShader: isProp ? propVS : worldVS, fragmentShader: isProp ? propFS : worldFS,
-      transparent: g.alpha === 2 || opacity < 1, depthWrite: opacity === 1, side: isProp || q.has('dbl') ? THREE.DoubleSide : THREE.FrontSide, // model windings are not trusted
+      transparent: g.alpha === 2 || opacity < 1, depthWrite: g.alpha !== 2 && opacity === 1, side: isProp || q.has('dbl') ? THREE.DoubleSide : THREE.FrontSide, // model windings are not trusted
     });
     if (g.tex) loadTex(base + 'tex/' + g.tex, (t) => { mat.uniforms.map.value = t; });
+    geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.frustumCulled = false; // few big meshes covering the whole map; culling per material group isn't worth it
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
     root.add(mesh);
   }
 }
@@ -143,15 +152,37 @@ skyCube.value = skyScene.background;
 
 // ---------- player ----------
 // Player collision = solids + grates + player-clips (the latter are listed last); bullets ignore everything from bulletLimit on.
-const playerWorld = makeWorld(world.collision.concat(world.playerOnly ?? []));
+const playerWorld = makeWorld(world.collision.concat(world.playerOnly ?? []), world.ladders);
 const player = new Player(playerWorld);
 // Doors and breakable glass: their collision follows the server's state (so prediction matches), their meshes turn / slide / vanish with it
 const movers = createMovers(playerWorld, world.movers);
+const ventMetal = new THREE.MeshBasicMaterial({ color: 0x777f80 });
+const ventInset = new THREE.MeshBasicMaterial({ color: 0x252a2c });
+function addVent(root, points) {
+  const size = [0, 1, 2].map((a) => Math.max(...points.map((p) => p[a])) - Math.min(...points.map((p) => p[a])));
+  const thin = size[0] < size[1] ? 0 : 1, across = 1 - thin;
+  const width = size[across], height = size[2], gap = height / 6;
+  const box = (w, h, depth, x, z, material) => {
+    const dimensions = [w, w, h];
+    dimensions[thin] = depth;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...dimensions), material);
+    mesh.position.setComponent(across, x);
+    mesh.position.z = z;
+    root.add(mesh);
+  };
+  box(width, height, 1.5, 0, 0, ventInset);
+  for (const sign of [-1, 1]) {
+    box(3, height, 4, sign * (width - 3) / 2, 0, ventMetal);
+    box(width, 3, 4, 0, sign * (height - 3) / 2, ventMetal);
+  }
+  for (let i = -2; i <= 2; i++) box(width - 6, gap * 0.55, 3, 0, i * gap, ventMetal);
+}
 const moverViews = movers.defs.map((d) => {
   const outer = new THREE.Group(), inner = new THREE.Group();
   outer.position.set(...d.pivot); inner.position.set(-d.pivot[0], -d.pivot[1], -d.pivot[2]); // turn about the hinge
   outer.add(inner); worldRoot.add(outer);
   addGroups(inner, d.groups, 'world', worldFog, d.opacity ?? 1); addGroups(inner, d.props, 'prop');
+  if (d.panel === 'vent') addVent(outer, d.pieces[0].pts);
   return outer;
 });
 movers.defs.forEach((d, i) => { if (d.parent >= 0) moverViews[d.parent].children[0].add(moverViews[i]); }); // glass in a door turns with it
@@ -168,7 +199,7 @@ function setMover(i, v) {
   else view.rotation.z = (v * Math.PI) / 180;
 }
 // Own movement is predicted locally with the same code the server runs, then reconciled against each snapshot (see onSnap).
-const PLAYER_FIELDS = ['onGround', 'ducked', 'ducking', 'ducktime', 'stamina', 'oldJump', 'oldDuck', 'eyeZ', 'velMod'];
+const PLAYER_FIELDS = ['onGround', 'ducked', 'ducking', 'ducktime', 'stamina', 'oldJump', 'oldDuck', 'eyeZ', 'velMod', 'onLadder', 'ladderCooldown', 'ladderNormal'];
 let you = { team: 'ct', money: 800, armor: 0, hp: 100, alive: 1, owned: ['knife', 'usp'], weapon: 'usp' };
 let roundState = { phase: 'freeze', alive: { ct: 5, t: 5 }, scores: { ct: 0, t: 0 }, number: 1, left: 5 };
 const applyServerState = (y) => { player.o = [...y.o]; player.v = [...y.v]; for (const f of PLAYER_FIELDS) player[f] = y[f]; };
@@ -254,7 +285,7 @@ function handleEvent(ev, now) {
     playAt('weapons/c4/c4_explode1', ev.o, 1.4, 'blast'); bombs?.explode(ev.o, now);
     setTimeout(() => playAt('weapons/c4/c4_exp_deb' + (1 + (Math.random() * 2 | 0)), ev.o, 1, 'blast'), 700); // falling debris
     const d = Math.hypot(ev.o[0] - player.o[0], ev.o[1] - player.o[1], ev.o[2] - player.o[2]);
-    if (d < 1800) { flashUntil = now + 0.25 + (1 - d / 1800) * 0.6; flashDur = 0.9; } // the blast lights up the screen
+    if (d < 1800 && flashUntil <= now) { flashUntil = now + 0.25 + (1 - d / 1800) * 0.6; flashDur = 0.9; } // the blast lights up the screen
   }
   else if (ev.e === 'hurt') { // we got hit: aim punch (CS:S kicks the view on damage) and a red arc toward the shooter
     if (ev.to !== net.id) return;
@@ -285,7 +316,15 @@ function handleEvent(ev, now) {
     }
     const killer = ev.killer === net.id ? { name: net.name, team: you.team } : players?.byId.get(ev.killer);
     const victim = ev.victim === net.id ? { name: net.name, team: you.team } : players?.byId.get(ev.victim);
-    hud.kill({ killer: killer?.name ?? 'World', killerTeam: killer?.team ?? 't', victim: victim?.name ?? 'Player', victimTeam: victim?.team ?? 'ct', icon: ev.w === 'world' ? 'skull' : WEAPONS[ev.w]?.icon, headshot: ev.hs, wallbang: ev.wb, local: ev.killer === net.id });
+    const assister = ev.as ? (ev.as === net.id ? { name: net.name, team: you.team } : players?.byId.get(ev.as)) : null;
+    hud.kill({
+      killer: killer?.name ?? 'World', killerTeam: killer?.team ?? 't',
+      assist: assister?.name ?? null, assistTeam: assister?.team ?? null, flashAssist: !!ev.fa,
+      victim: victim?.name ?? 'Player', victimTeam: victim?.team ?? 'ct',
+      icon: ev.w === 'world' ? 'skull' : WEAPONS[ev.w]?.icon,
+      headshot: !!ev.hs, wallbang: !!ev.wb, thruSmoke: !!ev.smk, blind: !!ev.blind, noscope: !!ev.ns, airborne: !!ev.air, dom: !!ev.dom, rev: !!ev.rev,
+      local: ev.killer === net.id || ev.as === net.id,
+    });
   }
 }
 function onSnap(d, arrival) {
@@ -309,7 +348,7 @@ function onSnap(d, arrival) {
   if (y.hp < you.hp && y.alive) { hurtEl.style.opacity = Math.min(0.55, (you.hp - y.hp) / 60 + 0.18); setTimeout(() => { hurtEl.style.opacity = 0; }, 90); }
   if (you.alive && !y.alive && !deadAt) deadAt = arrival; // died (the death event may come a moment later)
   if (spawned) { // return from the spectator camera and discard any held fire input
-    deadAt = 0; killedBy = ''; specIdx = 0; specTargetId = null;
+    deadAt = 0; killedBy = ''; specIdx = 0; specTargetId = null; flashUntil = 0;
     players?.setSpectated(null); players?.removeSelf(net.id);
     if (weapons) { weapons.setSpectate(null); weapons.state.held = false; }
   }
@@ -325,7 +364,7 @@ function onSnap(d, arrival) {
   weapons?.setLoadout(y.owned, y.weapon);
   players?.syncDrops(d.drops ?? []);
   grenades?.sync(d.gr ?? [], d.smokes ?? [], d.fires ?? []);
-  roster = d.ents; buyMenu?.refresh(); teamMenu?.refresh();
+  roster = d.ents; if (buyMenu?.isOpen()) buyMenu.refresh(); if (teamMenu?.isOpen()) teamMenu.refresh();
   for (const e of d.ev) snapEvents.push(e);
 }
 const netWarn = document.getElementById('netwarn');
@@ -396,7 +435,7 @@ if (q.get('wep')) weapons.select(q.get('wep')); // debug: ?wep=ak47&autofire (ho
 if (q.has('autofire')) weapons.state.held = true;
 const flashEl = document.getElementById('flash');
 const keys = new Set();
-let wheelJump = false; // a wheel notch counts as the jump button being down for exactly one usercmd
+let wheelJumpUntil = 0; // a wheel notch buffers jump across ~95 ms of landing ticks for effortless scroll-wheel bhop
 const info = document.getElementById('info');
 if (q.has('debug')) info.style.display = 'block'; // ?debug: fps / speed / position line
 addEventListener('keydown', (e) => {
@@ -425,9 +464,12 @@ addEventListener('keydown', (e) => {
   if (!you.alive && is('jump', e.code) && !e.repeat && document.pointerLockElement && !uiOpen()) specFirstPerson = !specFirstPerson;
   if (e.code === 'Space' || is('jump', e.code)) e.preventDefault();
 }, { capture: true });
-// Scroll-wheel jump (+jump/-jump in one frame), the classic bhop bind. Must be a non-passive listener or the browser
-// ignores preventDefault, and Ctrl+scroll zooms the page.
-addEventListener('wheel', (e) => { if (document.pointerLockElement) e.preventDefault(); wheelJump = true; }, { passive: false });
+// Buffer wheel jumps only when the game owns the mouse.
+addEventListener('wheel', (e) => {
+  if (!document.pointerLockElement || uiOpen()) return;
+  e.preventDefault();
+  wheelJumpUntil = performance.now() + 95;
+}, { passive: false });
 for (const ev of ['gesturestart', 'gesturechange', 'contextmenu', 'auxclick']) addEventListener(ev, (e) => { if (document.pointerLockElement || touch?.isActive()) e.preventDefault(); }, { passive: false });
 function nearBomb() {
   if (!you.alive || you.team !== 'ct' || lastBomb?.s !== 'planted') return false;
@@ -504,7 +546,7 @@ addEventListener('mousemove', (e) => {
 });
 
 // ---------- loop: 128 Hz usercmds (same tick rate as the server), camera interpolated between ticks ----------
-let acc = 0, last = performance.now(), fps = 0, frames = 0, fpsT = last;
+let acc = 0, last = performance.now(), fps = 0, frames = 0, fpsT = last, infoT = 0, lastFlashOp = -1, lastNetWarn = false, lastDeadCls = false, lastDeathDisp = false;
 const rad = Math.PI / 180;
 // Death cam: first a third-person view of our own ragdoll ("Killed by X"), then a chase camera on a living teammate (anyone, if none).
 // The mouse still turns the view (it orbits the target); the camera is kept out of walls with a trace.
@@ -552,12 +594,11 @@ renderer.setAnimationLoop((now) => {
       t: 'cmd', seq: ++seq,
       f: tm?.f || (keys.has(binds.forward) ? 1 : 0) - (keys.has(binds.back) ? 1 : 0),
       s: tm?.s || (keys.has(binds.right) ? 1 : 0) - (keys.has(binds.left) ? 1 : 0),
-      j: (tm?.j || keys.has(binds.jump) || wheelJump) ? 1 : 0,
+      j: (tm?.j || keys.has(binds.jump) || now <= wheelJumpUntil) ? 1 : 0,
       d: (tm?.d || keys.has(binds.duck)) ? 1 : 0,
       w: (tm?.w || keys.has(binds.walk)) ? 1 : 0,
       yaw: player.yaw, pitch: player.pitch,
     };
-    wheelJump = false;
     if (roundState.phase === 'freeze' || !you.alive || weapons.state.planting || defuseHeld || you.act) { cmd.f = cmd.s = cmd.j = 0; } // freeze time / dead / planting / defusing: no moving (the server enforces it too)
     if (!q.has('freeze')) {
       player.tick(cmdInput(cmd));
@@ -568,14 +609,19 @@ renderer.setAnimationLoop((now) => {
   const dead = !you.alive && (!!deadAt || you.team === 'spec');
   devPanel.update(); scoreboard.update();
   // like CS:S: a red warning top right once the server goes quiet (snapshots come 128 times a second), counting down cl_timeout
-  const quiet = (performance.now() - net.lastMsg) / 1000, left = 60 - quiet;
-  netWarn.style.display = !net.connected || quiet > 1 ? 'block' : 'none';
-  if (!net.connected || quiet > 1) netWarn.textContent = net.kicked ? 'You were kicked from the server' : `WARNING:  Connection Problem
+  const quiet = (now - net.lastMsg) / 1000, left = 60 - quiet, showWarn = !net.connected || quiet > 1;
+  if (showWarn !== lastNetWarn) { lastNetWarn = showWarn; netWarn.style.display = showWarn ? 'block' : 'none'; }
+  if (showWarn) netWarn.textContent = net.kicked ? 'You were kicked from the server' : `WARNING:  Connection Problem
 ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
-  if (!dead) { weapons.update(dt); deathEl.style.display = 'none'; specTargetId = null; players.setSpectated(null); }
+  if (!dead) {
+    weapons.update(dt);
+    if (lastDeathDisp) { lastDeathDisp = false; deathEl.style.display = 'none'; }
+    specTargetId = null; players.setSpectated(null);
+  } else lastDeathDisp = true;
   grenades.update(dt);
   bombs.update(now / 1000);
-  flashEl.style.opacity = now / 1000 < flashUntil ? Math.min(1, (flashUntil - now / 1000) / Math.min(flashDur, 2) * 1.6) : 0; // full white, then fades
+  const flashOp = now / 1000 < flashUntil ? Math.min(1, (flashUntil - now / 1000) / Math.min(flashDur, 2) * 1.6) : 0; // full white, then fades
+  if (flashOp !== lastFlashOp) { lastFlashOp = flashOp; flashEl.style.opacity = flashOp; }
   for (const ev of snapEvents.splice(0)) handleEvent(ev, now / 1000);
   ambience.update(now / 1000);
   players.update(now / 1000, player.eye);
@@ -587,7 +633,8 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   let e = player.eyeAt(acc / TICK), cp = Math.cos(pitch);
   let f = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)], lyaw = player.yaw, lpitch = player.pitch, specFirst = false;
   if (dead) [e, f, lyaw, lpitch, specFirst] = deathCam(now / 1000, dt);
-  document.body.classList.toggle('dead', dead && !specFirst);
+  const deadCls = dead && !specFirst;
+  if (deadCls !== lastDeadCls) { lastDeadCls = deadCls; document.body.classList.toggle('dead', deadCls); }
   setListener(dead ? e : player.eye, lyaw, lpitch);
   face(camera, e[0], e[1], e[2], f);
   renderer.clear();
@@ -600,6 +647,9 @@ ${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
   if (!dead || specFirst) weapons.render(innerWidth / innerHeight); // viewmodel when alive or in 1st-person spectator
   frames++;
   if (now - fpsT > 500) { fps = Math.round((frames * 1000) / (now - fpsT)); frames = 0; fpsT = now; }
-  info.textContent = `${fps} fps  speed ${Math.hypot(player.v[0], player.v[1]) | 0}/${player.maxSpeed}  stamina ${player.stamina | 0}  pos ${player.o.map(Math.round).join(' ')}  ${you.team.toUpperCase()}`;
+  if ((settings.showFps || q.has('debug')) && now - infoT > 100) {
+    infoT = now;
+    info.textContent = `${fps} fps  speed ${Math.hypot(player.v[0], player.v[1]) | 0}/${player.maxSpeed}  stamina ${player.stamina | 0}  pos ${player.o.map(Math.round).join(' ')}  ${you.team.toUpperCase()}`;
+  }
 });
 window.game = { player, camera, world, weapons, players, net, get you() { return you; }, get roundState() { return roundState; }, get lastBomb() { return lastBomb; } };

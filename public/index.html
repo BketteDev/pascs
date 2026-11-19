@@ -44,9 +44,10 @@
   #radar { position: fixed; left: 14px; top: 14px; width: 220px; height: 220px; border-radius: 8px; pointer-events: none; }
   #feed { position: fixed; right: 12px; top: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; pointer-events: none;
     font: bold 13px Verdana, Tahoma, sans-serif; }
-  #feed .notice { display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.55); border: 1px solid transparent; border-radius: 4px; padding: 2px 8px; height: 24px; }
+  #feed .notice { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.55); border: 1px solid transparent; border-radius: 4px; padding: 2px 8px; height: 24px; }
   #feed .notice.local { border-color: rgba(220, 0, 0, 0.9); }
-  #feed img { height: 20px; filter: drop-shadow(0 0 1px #000); }
+  #feed img, #feed .kf-ico { height: 19px; filter: drop-shadow(0 0 1px #000); flex-shrink: 0; }
+  #feed .kf-plus { color: #ccc; font-weight: bold; margin: 0 -1px; }
   .panel { position: fixed; bottom: 4px; display: flex; align-items: center; gap: 12px; background: rgba(0,0,0,.4); border-radius: 8px; padding: 4px 18px; height: 56px; box-sizing: border-box; pointer-events: none; }
   .panel .num { font-size: 46px; line-height: 1; min-width: 70px; text-align: right; position: relative; top: -5px; } /* the Counter-Strike font sits low in its line */
   .panel.low .num { color: #ff4030; text-shadow: 0 0 6px rgba(255,40,20,.5); }

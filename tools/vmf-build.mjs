@@ -1,11 +1,12 @@
 // Builds a web map (public/maps/<name>/) from a decompiled Source map (.vmf), e.g. the CS:GO maps in reference/decompiled-csgo-maps.
-// Usage: node tools/vmf-build.mjs <map.vmf> <name> [--mode wingman]
+// Usage: node tools/vmf-build.mjs <map.vmf> <name> [--bsp map.bsp] [--mode wingman]
 // A VMF has no compiled lighting and CS:GO textures are mostly absent from the CS:S content, so this build: bakes simple face-direction
 // shading (top / sides / underside) into a tiny lightmap, replaces missing textures with a deterministic CS:S texture of the same family
 // (wood/ plaster/ stone/ ...), takes collision from the brushes (player clips become player-only), and draws a radar from brush footprints.
 import fs from 'fs';
 import path from 'path';
-import { parseVmf, parseSides, sidePolygon, emitSolid, emitProp, parts } from './vmf-export.mjs';
+import zlib from 'node:zlib';
+import { parseVmf, parseSides, sidePolygon, emitSolid, emitProp, emitOverlay, parts, propsMissing } from './vmf-export.mjs';
 import { loadPhy } from './mdl.mjs';
 import { png, vtfToRgba } from './vtf.mjs';
 import { cs2Texture } from './cs2tex.mjs';
@@ -15,16 +16,18 @@ import { moverEntry } from '../public/movers.js';
 import { makeWorld, trace } from '../public/physics.js';
 import { loadOrBuildNav } from '../server/nav.mjs';
 import { promoteMapWindows } from './promote-windows.mjs';
+import { vmfLadders } from './ladder-data.mjs';
 
-const [vmfFile, MAP] = process.argv.slice(2);
-if (!vmfFile || !MAP) { console.log('usage: node tools/vmf-build.mjs <map.vmf> <name> [--mode wingman]'); process.exit(1); }
-// the compiled map in the CS:GO install or local CS:S maps carries embedded textures/models in its pak lump
-if (fs.existsSync(`${CSGO}/maps/${MAP}.bsp`)) console.log(`${MAP}: ${addBspPak(`${CSGO}/maps/${MAP}.bsp`)} files from the CS:GO map's pak`);
-const cssMaps = path.resolve(import.meta.dirname, '..', '..', 'content', 'maps');
-if (fs.existsSync(cssMaps)) {
-  const bsps = fs.readdirSync(cssMaps).filter((f) => f.endsWith('.bsp')).sort((a, b) => (a === MAP + '.bsp' ? -1 : b === MAP + '.bsp' ? 1 : a.localeCompare(b)));
-  for (const f of bsps) addBspPak(path.join(cssMaps, f));
-}
+const [vmfFile, MAP, ...args] = process.argv.slice(2);
+if (!vmfFile || !/^[a-z0-9_]+$/.test(MAP ?? '')) { console.log('usage: node tools/vmf-build.mjs <map.vmf> <name> [--bsp map.bsp] [--mode wingman]'); process.exit(1); }
+const bspIndex = args.indexOf('--bsp');
+const bsp = bspIndex >= 0 ? args[bspIndex + 1] : [
+  vmfFile.replace(/\.vmf$/i, '.bsp'),
+  path.resolve(import.meta.dirname, '..', '..', 'content', 'maps', MAP + '.bsp'),
+  path.join(CSGO, 'maps', MAP + '.bsp'),
+].find((file) => file !== vmfFile && fs.existsSync(file));
+if (bspIndex >= 0 && (!bsp || !fs.existsSync(bsp))) throw new Error('--bsp requires an existing BSP file');
+if (bsp) console.log(`${MAP}: ${addBspPak(bsp)} embedded assets from ${bsp}`);
 const mode = process.argv.includes('--mode') ? process.argv[process.argv.indexOf('--mode') + 1] : null;
 const ROOT = path.resolve(import.meta.dirname, '..', '..', 'content', 'css_content', 'materials');
 const OUT = path.resolve(import.meta.dirname, '..', 'public', 'maps', MAP);
@@ -34,16 +37,24 @@ const tree = parseVmf(fs.readFileSync(vmfFile, 'latin1'));
 const ents = tree.kids.filter((k) => k.name === 'entity'), worldNode = tree.kids.find((k) => k.name === 'world');
 const cls = (e) => e.props.get('classname') ?? '';
 const vec = (s) => (s ?? '0 0 0').trim().split(/\s+/).map(Number);
+const fogOf = (e) => {
+  if (e?.props.get('fogenable') !== '1') return null;
+  const color = vec(e.props.get('fogcolor')).map((c) => Math.max(0, Math.min(255, c)) / 255);
+  const start = Number(e.props.get('fogstart') ?? 0), end = Number(e.props.get('fogend'));
+  const max = Number(e.props.get('fogmaxdensity') ?? 1);
+  return color.length === 3 && end > start && [...color, start, end, max].every(Number.isFinite)
+    ? { color, start, end, max: Math.max(0, Math.min(1, max)) } : null;
+};
 
 // ---------- visual geometry + props (shared with the GLB exporter) ----------
-const SOLID_ENTS = /^(func_detail|func_wall|func_brush)$/;
+const SOLID_ENTS = /^(func_detail|func_wall|func_brush|func_illusionary)$/;
 const MOVER_DOORS = /^(func_door|func_door_rotating)$/;
 const MOVER_BREAKABLES = /^(func_breakable|func_breakable_surf)$/;
 const solids = [...worldNode.kids.filter((k) => k.name === 'solid').map((s) => ({ s, ent: worldNode, noCol: false }))];
 for (const e of ents) {
   if (!SOLID_ENTS.test(cls(e))) continue;
   if (cls(e) === 'func_brush' && e.props.get('StartDisabled') === '1') continue; // e.g. disabled Wingman blockers
-  const noCol = cls(e) === 'func_brush' && e.props.get('Solidity') === '1'; // Never Solid
+  const noCol = cls(e) === 'func_illusionary' || (cls(e) === 'func_brush' && e.props.get('Solidity') === '1'); // Never Solid
   for (const s of e.kids.filter((k) => k.name === 'solid')) solids.push({ s, ent: e, noCol });
 }
 // The 3D-skybox scenery (distant city, hills) lives in the same VMF around sky_camera inside a sealed toolsskybox box: find that box in 3D so playable geometry nearby is never culled.
@@ -62,10 +73,18 @@ const skyBounds = (() => {
     if (inXZ && b.hi[1] < skyAt[1]) lo[1] = Math.max(lo[1], b.lo[1]); if (inXZ && b.lo[1] > skyAt[1]) hi[1] = Math.min(hi[1], b.hi[1]);
     if (inXY && b.hi[2] < skyAt[2]) lo[2] = Math.max(lo[2], b.lo[2]); if (inXY && b.lo[2] > skyAt[2]) hi[2] = Math.min(hi[2], b.hi[2]);
   }
-  return { lo: lo.map((v, a) => (Number.isFinite(v) ? v - 64 : skyAt[a] - 1500)), hi: hi.map((v, a) => (Number.isFinite(v) ? v + 64 : skyAt[a] + 1500)) };
+  if (![...lo, ...hi].every(Number.isFinite)) return null;
+  const contains = (p) => p.every((v, i) => v >= lo[i] && v <= hi[i]);
+  if (ents.some((e) => /^info_player_/.test(cls(e)) && contains(vec(e.props.get('origin'))))) return null;
+  return { lo, hi };
 })();
 const inSky = (c) => skyBounds && c[0] >= skyBounds.lo[0] && c[0] <= skyBounds.hi[0] && c[1] >= skyBounds.lo[1] && c[1] <= skyBounds.hi[1] && c[2] >= skyBounds.lo[2] && c[2] <= skyBounds.hi[2];
-for (let i = solids.length - 1; i >= 0; i--) if (inSky(solidCentre(solids[i].s))) solids.splice(i, 1);
+const skyParts = new Map(), skySolids = [];
+for (let i = solids.length - 1; i >= 0; i--) if (inSky(solidCentre(solids[i].s))) {
+  emitSolid(solids[i].s, skyParts);
+  skySolids.push(...solids.splice(i, 1));
+}
+if (skyCam && !skyBounds) console.warn(`${MAP}: couldn't isolate a sealed 3D skybox from the playable area`);
 const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -112,11 +131,48 @@ for (const { s } of solids) {
 const collision = [], playerOnly = [], skyBrushIdx = [], surfOf = [];
 const surfaceOf = (m) => SURFACES.indexOf(/glass|window/.test(m) ? 'glass' : /wood|crate|plank|barrel/.test(m) ? 'wood' : /grass|blendgrass/.test(m) ? 'grass' : /sand/.test(m) ? 'sand' : /dirt|mud|gravel|nature/.test(m) ? 'gravel' : /metal/.test(m) ? 'metal' : /tile/.test(m) ? 'tile' : 'concrete');
 const footprints = [];
-let skippedBrushes = 0, propCols = 0;
+let skippedBrushes = 0, propCols = 0, overlaysPlaced = 0;
+const PROP_CLS = /^prop_(static|dynamic|physics|detail|door_rotating|ragdoll)/;
+const namedProps = new Map(ents.filter((e) => /^prop_dynamic/.test(cls(e))).map((e) => [e.props.get('targetname'), e]));
+const ventCovers = new Map();
 for (const e of ents) {
-  if (!/^prop_(static|dynamic|physics|detail)/.test(cls(e)) || inSky(vec(e.props.get('origin')))) continue;
-  const placed = emitProp(e);
-  if (!placed || !placed.solid) continue;
+  if (cls(e) !== 'func_breakable' || e.props.get('rendermode') !== '10' || e.props.get('material') !== '2') continue;
+  if (e.kids.filter((k) => k.name === 'solid' && !inSky(solidCentre(k))).length !== 1) continue;
+  const output = e.kids.find((k) => k.name === 'connections')?.props.get('OnBreak');
+  const [target, input] = output?.split(/[\x1b,]/) ?? [];
+  const prop = namedProps.get(target);
+  if (input === 'Break' && /cover_sheetmetal\.mdl$/i.test(prop?.props.get('model') ?? '')) ventCovers.set(e, prop);
+}
+const linkedCovers = new Set(ventCovers.values());
+const propFreq = new Map();
+for (const e of ents) {
+  if (!PROP_CLS.test(cls(e)) || linkedCovers.has(e)) continue;
+  const m = (e.props.get('model') ?? '').replace(/\\/g, '/').toLowerCase();
+  if (m.endsWith('.mdl')) propFreq.set(m, (propFreq.get(m) ?? 0) + 1);
+}
+const totalProps = [...propFreq.values()].reduce((a, b) => a + b, 0);
+const envCap = Number(process.env.CS2_PROP_CAP) || 0;
+const capFor = (m) => {
+  if (envCap) return envCap;
+  if (/palm|(?:^|[/_])(?:tank|shell)s?(?:[_./]|$)/.test(m)) return Infinity; // clustering folds cards and rounded shells
+  const c = propFreq.get(m) ?? 1;
+  if (c <= 2) return 3200; // 1-2 instance hero props (trucks, reactor, trailers) stay crisp without coarse clustering
+  const scale = totalProps > 2500 ? 0.35 : totalProps > 1300 ? 0.45 : 1;
+  const base = c <= 6 ? 900 : c <= 20 ? 380 : 170;
+  if (/(?:fence|railing|scaffold|pallet)/.test(m)) return Math.max(1600, Math.round(base * scale));
+  return Math.max(80, Math.round(base * scale));
+};
+let propsPlaced = 0;
+const substitutes = new Map();
+for (const e of ents) {
+  if (!PROP_CLS.test(cls(e)) || linkedCovers.has(e)) continue;
+  const skyProp = inSky(vec(e.props.get('origin')));
+  const mKey = (e.props.get('model') ?? '').replace(/\\/g, '/').toLowerCase();
+  const placed = emitProp(e, capFor(mKey), skyProp ? skyParts : parts);
+  if (!placed) continue;
+  propsPlaced++;
+  if (placed.model !== placed.rawModel) substitutes.set(placed.rawModel, placed.model);
+  if (skyProp || !placed.solid) continue;
   const { m, model, base, o, M, scale = 1, solid } = placed;
   const place = (pts) => pts.map((q) => applyM3(M, scale === 1 ? q : q.map((v) => v * scale)).map((v, k) => v + o[k]));
   const phy = solid === 6 ? (m.phy ?? (base ? getPhy(base) : null)) : null;
@@ -134,6 +190,34 @@ for (const e of ents) {
     const faces = []; for (let a = 0; a < 3; a++) for (const sgn of [1, -1]) { const ax = [0, 0, 0]; ax[a] = sgn; const n = applyM3(M, ax); faces.push([...n, dot3(n, place([corners.find((c) => c[a] === (sgn > 0 ? h[a] : l[a]))])[0])]); }
     collision.push(convexEntry(place(corners), faces, edgePairs.map(([p, q]) => place([p, q])))); surfOf.push(surf); propCols++;
   }
+}
+const overlayAlphaCache = new Map();
+const hasAlphaOverlay = (mat) => {
+  if (!overlayAlphaCache.has(mat)) {
+    const t = cs2Texture(mat);
+    overlayAlphaCache.set(mat, !!(t && t.alpha > 0.02));
+  }
+  return overlayAlphaCache.get(mat);
+};
+const overlaysSkipped = new Set();
+const overlayFaces = new Map();
+const overlaySides = new Set(ents.filter((e) => cls(e) === 'info_overlay')
+  .flatMap((e) => (e.props.get('sides') ?? '').trim().split(/\s+/)));
+for (const { s } of [...solids, ...skySolids]) {
+  const ids = s.kids.filter((k) => k.name === 'side').map((k) => k.props.get('id'));
+  if (!ids.some((id) => overlaySides.has(id))) continue;
+  const sides = parseSides(s);
+  ids.forEach((id, i) => {
+    if (!overlaySides.has(id) || /^(tools\/|toolsnodraw)/.test(sides[i].material)) return;
+    const poly = sidePolygon(sides, i);
+    if (!sides[i].disp && poly.length >= 3) overlayFaces.set(id, { poly, n: sides[i].n, d: sides[i].d });
+  });
+}
+for (const e of ents) {
+  if (cls(e) !== 'info_overlay') continue;
+  const target = inSky(vec(e.props.get('BasisOrigin') ?? e.props.get('origin'))) ? skyParts : parts;
+  if (emitOverlay(e, hasAlphaOverlay, target, overlayFaces)) overlaysPlaced++;
+  else overlaysSkipped.add(e.props.get('material') ?? '(no material)');
 }
 for (const { s, noCol } of solids) {
   if (noCol) continue;
@@ -188,7 +272,7 @@ const gridPng = (rgbaA, rgbaB, fn) => {
 };
 const FLAT = [[/(?:^|\/)liquids\/|\bwater\b|water_/, [60, 105, 125, 170]], [/(?:^|\/)glass\/|glasswindow/, [150, 185, 200, 70]], [/bush|plant|shrub|foliage|tree|leaf|hedge|grass|nature|dirt|mud/, [78, 104, 58, 255]], [/wood/, [128, 96, 64, 255]], [/plaster|wallpaper/, [208, 190, 156, 255]], [/stone|brick|rock|cobble/, [150, 138, 120, 255]], [/metal/, [104, 106, 110, 255]], [/white\b/, [232, 228, 220, 255]], [/black\b/, [28, 28, 32, 255]], [/concrete/, [150, 148, 142, 255]]];
 function standIn(name) {
-  const isProp = name.startsWith('prop:'), clean = name.replace(/^prop:/, '').trim();
+  const isProp = name.startsWith('prop:'), isOverlay = name.startsWith('overlay:'), clean = name.replace(/^(?:prop|overlay):/, '').trim();
   let cs2 = cs2Texture(clean); // the real texture from the Counter-Strike 2 install when it still ships it
   if (!cs2) {
     try {
@@ -198,14 +282,21 @@ function standIn(name) {
     } catch {}
   }
   const isWater = /(?:^|\/)liquids\/|\bwater\b|water_/.test(clean);
-  const isGlass = /(?:^|\/)glass\/|glasswindow/.test(clean);
-  if (cs2 && (!isGlass || cs2.alpha > 0.02)) {
-    const alpha = cs2.alpha > 0.02 ? (isGlass ? 'BLEND' : (SEE_THROUGH.test(clean) || cs2.trans) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
+  const isGlass = /(?:^|\/)glass\/|glasswindow/.test(clean) && !/panel|frame/.test(clean);
+  const isBlendDecal = isOverlay || /edgewear|puddle|stain/.test(clean);
+  const hasTransparency = isGlass || isBlendDecal || SEE_THROUGH.test(clean) || cs2?.trans;
+  if (cs2 && (!isGlass || cs2.alpha > 0.02) && (hasTransparency || cs2.alpha < 0.995)) {
+    const alpha = cs2.alpha > 0.02 ? ((isGlass || isBlendDecal) ? 'BLEND' : (SEE_THROUGH.test(clean) || cs2.trans) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
     return { png: cs2.png, w: cs2.w, h: cs2.h, alpha, stand: true, real: true };
   }
   const base = clean.replace(/^maps\/[^/]+\//, '');
   const isFoliage = /bush|plant|shrub|foliage|tree|leaf|hedge|fern|ivy|vine/.test(base);
   const isFence = /fence|gate|grate|chainlink|rail|truss|grill/.test(base);
+  if (isGlass) {
+    const px = Buffer.alloc(64);
+    for (let i = 0; i < 16; i++) px.set([150, 185, 200, 70], i * 4);
+    return { png: png(4, 4, 4, px), w: 512, h: 512, alpha: 'BLEND', stand: false };
+  }
   if (isFence) return gridPng([82, 86, 90, 255], [0, 0, 0, 0], (x, y) => ((x + y) % 8 === 0) || ((x - y + 16) % 8 === 0));
   if (isFoliage && (isProp || clean !== base)) return gridPng([74, 102, 52, 255], [0, 0, 0, 0], (x, y) => ((x * 5 + y * 3) % 7) < 3 && (x % 4 !== 0 || y % 4 !== 0));
   if (!isWater && !isGlass && !isFoliage && !/decal|sign|poster|graffiti|overlay/.test(base)) {
@@ -234,15 +325,17 @@ const SHADES = [0.55, 0.47, 0.41, 0.28]; // lightmap value (x2 in the shader) fo
 const lm = Buffer.alloc(SHADES.length * 3); SHADES.forEach((v, i) => lm.fill(Math.round(v * 255), i * 3, i * 3 + 3));
 fs.writeFileSync(path.join(OUT, 'lightmap.png'), png(SHADES.length, 1, 3, lm));
 const bins = []; let binLen = 0, standIns = 0, textured = 0;
+const fallbackMaterials = new Set();
 const push = (arr) => { const f = new Float32Array(arr); bins.push(Buffer.from(f.buffer)); const o = binLen; binLen += f.byteLength; return o; };
 function packParts(srcParts) {
   const out = [];
   for (const p of srcParts.values()) {
     if (!p.pos.length) continue;
-    const isProp = p.name.startsWith('prop:');
-    const tex = p.material.png ? { png: p.material.png, w: p.texW, h: p.texH, alpha: p.material.alpha, stand: false } : standIn(p.name);
-    if (p.material.png || tex.real) textured++; else standIns++;
-    const uv = isProp || !tex.stand ? p.uv : p.uv.map((v, i) => (v * 512) / (i % 2 ? tex.h : tex.w));
+    const isProp = p.name.startsWith('prop:'), isOverlay = p.name.startsWith('overlay:');
+    const tex = p.material.png ? { png: p.material.png, w: p.texW, h: p.texH, alpha: isOverlay ? 'BLEND' : p.material.alpha, stand: false } : standIn(p.name);
+    if (p.material.png || tex.real) textured++;
+    else { standIns++; fallbackMaterials.add(p.name); }
+    const uv = isProp || isOverlay || !tex.stand ? p.uv : p.uv.map((v, i) => (v * 512) / (i % 2 ? tex.h : tex.w));
     const lmuv = [];
     for (let i = 0; i < p.pos.length; i += 9) {
       const a = p.pos.slice(i, i + 3), b = p.pos.slice(i + 3, i + 6), c = p.pos.slice(i + 6, i + 9);
@@ -257,8 +350,9 @@ function packParts(srcParts) {
   return out;
 }
 const groups = packParts(parts);
+const sky = skyBounds ? { origin: skyAt, scale: Number(skyCam.props.get('scale')) > 0 ? Number(skyCam.props.get('scale')) : 16, groups: packParts(skyParts), props: [] } : null;
 
-// Movers: breakable windows/objects + func_door* entities (ignoring invisible tool-only entities such as Mirage's covered vent)
+// Movers: breakable windows/objects, linked metal covers and func_door* entities.
 const movers = [];
 for (const e of ents) {
   const c = cls(e);
@@ -266,7 +360,8 @@ for (const e of ents) {
   const eSolids = e.kids.filter((k) => k.name === 'solid' && !inSky(solidCentre(k)));
   if (!eSolids.length) continue;
   const allMats = eSolids.flatMap((s) => parseSides(s).map((sd) => sd.material ?? '').filter((m) => m && !/^(tools\/|toolsnodraw)/i.test(m)));
-  if (!allMats.length) continue; // e.g. Mirage invisible brush paired with missing CS:GO prop_dynamic vent
+  const vent = ventCovers.has(e);
+  if (!allMats.length && !vent) continue;
   const door = MOVER_DOORS.test(c), flags = Number(e.props.get('spawnflags') ?? 0), pivot = vec(e.props.get('origin'));
   const def = { cls: c, name: e.props.get('targetname') ?? '', slave: e.props.get('slavename') ?? '', parentName: e.props.get('parentname') ?? '', pivot, pieces: [], entries: [], groups: [], props: [] };
   let surface = 'wood';
@@ -283,6 +378,7 @@ for (const e of ents) {
     surface = allMats.some((m) => /metal/.test(m)) ? 'metal' : 'wood';
   } else {
     def.kind = 'break'; def.breakable = true;
+    if (vent) def.panel = 'vent';
     def.glass = c === 'func_breakable_surf' || Number(e.props.get('material') ?? 0) === 0 || allMats.some((m) => /glass|window/.test(m));
     def.health = def.glass ? 1 : Math.max(1, Number(e.props.get('health') ?? 1) || 1);
     surface = def.glass ? 'glass' : ['glass', 'wood', 'metal', 'concrete', 'concrete', 'concrete', 'concrete', 'concrete'][Number(e.props.get('material'))] ?? 'wood';
@@ -306,13 +402,16 @@ for (const e of ents) {
   const swept = [...[0, 1, 2].map((k) => Math.min(...reach.map((p) => p[k]))), ...[0, 1, 2].map((k) => Math.max(...reach.map((p) => p[k])))];
   for (const pc of def.pieces) { const en = Array.from(moverEntry(pc, (q) => q, (q) => q)); en.splice(0, 6, ...swept); def.entries.push(collision.length); collision.push(en); surfOf.push(SURFACES.indexOf(surface)); }
   def.center = [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2);
+  if (vent) def.pivot = def.center;
   movers.push(def);
 }
 for (const m of movers) {
   const parent = m.kind === 'door' || !m.parentName ? -1 : movers.findIndex((d) => d.kind === 'door' && !d.slide && d.name === m.parentName);
   if (parent >= 0) m.parent = parent;
 }
-fs.writeFileSync(path.join(OUT, 'world.bin'), Buffer.concat(bins));
+const geometry = Buffer.concat(bins);
+fs.writeFileSync(path.join(OUT, 'world.bin'), geometry);
+if (geometry.length >= 100 * 1024 * 1024) fs.writeFileSync(path.join(OUT, 'world.bin.gz'), zlib.gzipSync(geometry, { level: 9 }));
 
 // ---------- spawns, bombsites, sun ----------
 const spawn = (c) => ents.filter((e) => cls(e) === c).map((e) => ({ o: vec(e.props.get('origin')), yaw: vec(e.props.get('angles'))[1] }));
@@ -347,8 +446,8 @@ const modes = { wingman: { name: 'Wingman', teamSize: 2, roundTime: 90, sites: 1
 const spans = { ct: spawn('info_player_counterterrorist'), t: spawn('info_player_terrorist') };
 const worldJson = {
   game: 'csgo', sites, hostages, rescue, hurt: [], ambience: { zones: [], scapes: {}, ambients: [] },
-  groups, props: [], collision, playerOnly, movers, sky: null, spawns: spans,
-  fog: null, skyFog: null, sun: null, light: { ambient: [0.32, 0.34, 0.38], direct: col.slice(0, 3).map((c) => (c / m) * 0.8), sunDir },
+  groups, props: [], collision, playerOnly, movers, sky, spawns: spans,
+  fog: fogOf(ents.find((e) => cls(e) === 'env_fog_controller')), skyFog: fogOf(skyCam), sun: null, light: { ambient: [0.32, 0.34, 0.38], direct: col.slice(0, 3).map((c) => (c / m) * 0.8), sunDir },
   skyBrushIdx, surfaces: SURFACES, surfOf, overview: { pos_x: 0, pos_y: 0, scale: 1 }, mode: modes[mode] ?? null,
 };
 
@@ -390,6 +489,12 @@ for (const [zones, colBox] of [[sites, [220, 60, 50, 230]], [rescue, [60, 195, 9
 }
 fs.writeFileSync(path.join(OUT, 'overview.png'), png(1024, 1024, 4, img));
 worldJson.overview = { pos_x, pos_y, scale };
+worldJson.ladders = vmfLadders(tree);
 fs.writeFileSync(path.join(OUT, 'world.json'), JSON.stringify(worldJson));
 const winRes = promoteMapWindows(MAP);
-console.log(`${MAP}: ${groups.length} materials (${textured} textured, ${standIns} stand-ins), ${collision.length} brushes (${propCols} prop cols) + ${playerOnly.length} player clips (${skippedBrushes} tool/non-solid skipped), ${sites.length} bombsites, ${hostages.length} hostages, ${movers.length} movers (+${winRes.addedMovers} promoted windows), ${nav.nodes.length} nav nodes, spawns ${spans.ct.length}/${spans.t.length}`);
+console.log(`${MAP}: ${propsPlaced} props placed, ${propsMissing.size} unresolved models, ${substitutes.size} replacements`);
+for (const [model, count] of [...propsMissing].sort((a, b) => b[1] - a[1])) console.warn(`  missing model (${count}): ${model}`);
+for (const [model, replacement] of substitutes) console.log(`  substitute: ${model} -> ${replacement}`);
+for (const mat of fallbackMaterials) console.warn(`  fallback material: ${mat}`);
+for (const mat of overlaysSkipped) console.warn(`  skipped overlay: ${mat}`);
+console.log(`${MAP}: ${textured + standIns} material groups (${textured} textured, ${standIns} stand-ins, ${overlaysPlaced} overlays), ${collision.length} brushes (${propCols} prop cols) + ${playerOnly.length} player clips (${skippedBrushes} tool/non-solid skipped), ${sites.length} bombsites, ${hostages.length} hostages, ${movers.length} movers (+${winRes.addedMovers} promoted windows), ${nav.nodes.length} nav nodes, spawns ${spans.ct.length}/${spans.t.length}`);

@@ -145,7 +145,7 @@ for (const [team, list] of Object.entries(MODELS)) for (const name of list) {
 }
 const weapons = {}; // every weapon's world model, bone-merged into the player's hand at runtime
 for (const [key, def] of Object.entries(WEAPONS)) {
-  if (!def.model) continue;
+  if (!def.model || def.projectile) continue; // RPG world models are loaded from weapons/rocket.bin.
   const file = path.join(CONTENT, 'models', 'weapons', def.model.replace(/^v_/, 'w_'));
   weapons[key] = { meshes: meshesOf(loadModel(file)), bones: skeletonOf(loadSkeleton(file + '.mdl')) };
 }

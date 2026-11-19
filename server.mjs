@@ -58,9 +58,10 @@ function gzipped(file, st) { // -> path of an up-to-date gzip copy
     .finally(() => gzJobs.delete(out)));
   return gzJobs.get(out);
 }
-function serve(req, res, file) {
+function serve(req, res, file, packed = false) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) {
+      if (path.extname(file) === '.bin' && fs.existsSync(file + '.gz')) return serve(req, res, file + '.gz', true);
       // Linux containers are case-sensitive while Source asset names occasionally differ in case.
       const dir = path.dirname(file), base = path.basename(file).toLowerCase();
       fs.readdir(dir, (rerr, list) => {
@@ -73,6 +74,10 @@ function serve(req, res, file) {
     const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`, head = { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' };
     if (req.headers['if-none-match'] === etag) return res.writeHead(304, head).end();
     const send = (f, extra) => fs.createReadStream(f).on('error', () => res.destroy()).pipe(res.writeHead(200, { ...head, ...extra }));
+    if (packed) {
+      if (/\bgzip\b/.test(req.headers['accept-encoding'] ?? '')) return send(file, { 'Content-Encoding': 'gzip', 'Content-Length': st.size });
+      return fs.createReadStream(file).on('error', () => res.destroy()).pipe(zlib.createGunzip()).on('error', () => res.destroy()).pipe(res.writeHead(200, head));
+    }
     if (!GZIP.has(path.extname(file)) || !/\bgzip\b/.test(req.headers['accept-encoding'] ?? '')) return send(file, { 'Content-Length': st.size });
     gzipped(file, st).then((gz) => send(gz, { 'Content-Encoding': 'gzip', 'Content-Length': fs.statSync(gz).size }), () => send(file, { 'Content-Length': st.size }));
   });

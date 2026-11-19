@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { GRENADE, GRENADES, WEAPONS } from './weapon-defs.js';
 import { createIncendiaryModel, loadIncendiaryModels } from './incendiary-model.js';
+import { createRocketModel, loadRocketModels } from './rocket-model.js';
 
 const KEYS = GRENADES.filter((key) => WEAPONS[key].model);
 const blob = (stops) => { // soft round sprite texture
@@ -12,7 +13,7 @@ const blob = (stops) => { // soft round sprite texture
 };
 
 export async function createGrenades({ worldRoot, loadTex }) {
-  const [manifest] = await Promise.all([fetch('weapons/weapons.json').then((r) => r.json()), loadIncendiaryModels(loadTex)]);
+  const [manifest] = await Promise.all([fetch('weapons/weapons.json').then((r) => r.json()), loadIncendiaryModels(loadTex), loadRocketModels(loadTex)]);
   const geos = {}, mats = {};
   await Promise.all(KEYS.map(async (k) => {
     const m = manifest[k]?.world?.[0]; if (!m) return;
@@ -46,6 +47,7 @@ export async function createGrenades({ worldRoot, loadTex }) {
   };
 
   const live = new Map(); // grenade id -> { mesh, last }
+  const rocketAxis = new THREE.Vector3(1, 0, 0), rocketDir = new THREE.Vector3();
   const clouds = new Map(); // smoke id -> { puffs, age }
   const burning = new Map();
   const pops = []; // short effects: { sp, t, life, size }
@@ -57,8 +59,9 @@ export async function createGrenades({ worldRoot, loadTex }) {
       seen.add(g.id);
       let e = live.get(g.id);
       if (!e) {
-        if (!geos[g.w] && WEAPONS[g.w]?.grenade !== 'fire') continue;
-        const mesh = geos[g.w] ? new THREE.Mesh(geos[g.w], mats[g.w]) : createIncendiaryModel(g.w);
+        if (!geos[g.w] && !g.dir && WEAPONS[g.w]?.grenade !== 'fire') continue;
+        const mesh = g.dir ? createRocketModel(true) : geos[g.w] ? new THREE.Mesh(geos[g.w], mats[g.w]) : createIncendiaryModel(g.w);
+        if (g.dir) mesh.quaternion.setFromUnitVectors(rocketAxis, rocketDir.set(...g.dir).normalize());
         if (WEAPONS[g.w].grenade === 'fire') {
           mesh.rotation.x = Math.PI / 2;
           const trail = new THREE.Sprite(new THREE.SpriteMaterial({ map: flameFrames[0] ?? fireTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -67,7 +70,7 @@ export async function createGrenades({ worldRoot, loadTex }) {
           mesh.add(trail);
           mesh.userData.trail = trail;
         }
-        worldRoot.add(mesh); e = { mesh, last: g.o }; live.set(g.id, e);
+        worldRoot.add(mesh); e = { mesh, last: g.o, dir: g.dir, smokeIn: 0 }; live.set(g.id, e);
       }
       e.moved = Math.hypot(g.o[0] - e.last[0], g.o[1] - e.last[1], g.o[2] - e.last[2]) > 0.05; e.last = g.o;
       e.mesh.position.set(g.o[0], g.o[1], g.o[2]);
@@ -116,7 +119,7 @@ export async function createGrenades({ worldRoot, loadTex }) {
   }
 
   function pop(ev) { // explosion / flash flare at the grenade
-    const fire = WEAPONS[ev.w]?.grenade === 'fire', he = ev.w === 'hegrenade' || fire, flash = ev.w === 'flashbang';
+    const fire = WEAPONS[ev.w]?.grenade === 'fire', he = ev.w === 'hegrenade' || ev.w === 'rocket' || fire, flash = ev.w === 'flashbang';
     if (!he && !flash) return;
     const sp = sprite(he ? fireTex : flashTex, true); sp.position.set(ev.o[0], ev.o[1], ev.o[2] + 10);
     if (fire) sp.material.color.setHex(0xff7a22);
@@ -125,7 +128,15 @@ export async function createGrenades({ worldRoot, loadTex }) {
 
   function update(dt) {
     for (const e of live.values()) {
-      if (e.moved) { e.mesh.rotation.x += dt * 9; e.mesh.rotation.y += dt * 4; e.mesh.rotation.z += dt * 5; }
+      if (e.dir) {
+        e.smokeIn -= dt;
+        if (e.smokeIn <= 0 && e.moved) {
+          const sp = sprite(puffTex, false);
+          sp.position.fromArray(e.last).addScaledVector(rocketDir.set(...e.dir), -9);
+          pops.push({ sp, t: 0, life: 0.35, size: 20 });
+          e.smokeIn = 0.04;
+        }
+      } else if (e.moved) { e.mesh.rotation.x += dt * 9; e.mesh.rotation.y += dt * 4; e.mesh.rotation.z += dt * 5; }
       const tr = e.mesh.userData.trail;
       if (tr) {
         if (flameFrames.length) tr.material.map = flameFrames[Math.floor(performance.now() / 45) % 16];

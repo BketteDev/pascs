@@ -13,6 +13,8 @@ import { flatten, addSoundscapeScripts } from './soundscapes.mjs';
 import { makeWorld, trace as traceWorld } from '../public/physics.js';
 import { moverEntry } from '../public/movers.js';
 import { promoteMapWindows } from './promote-windows.mjs';
+import { bspLadders } from './ladder-data.mjs';
+import { fillMirageAmmo } from './mirage-ammo.mjs';
 
 const MAP = process.argv[2] || 'de_dust2';
 const ROOT = path.resolve(import.meta.dirname, '..', '..', 'content');
@@ -429,6 +431,7 @@ for (const e of entities) { // physics props placed as entities (rendered static
   if (!/^prop_(physics|dynamic)/.test(e.classname) || !e.model || doorNames.has(e.parentname)) continue; // door handles go with their door (movers)
   propList.push({ model: e.model, o: e.origin.split(' ').map(Number), a: (e.angles ?? '0 0 0').split(' ').map(Number), solid: Number(e.solid ?? 6), skin: Number(e.skin ?? 0), seq: e.DefaultAnim ?? '' }); // solid 0: decoration (fans, banners, the hovering chopper)
 }
+if (MAP === 'de_mirage_csgo_new') console.log('Mirage shell racks completed:', fillMirageAmmo(propList));
 // ---------- baked prop lighting ----------
 // Calibrate the sun from the lightmaps themselves: up-facing faces in sunlight vs in shade give direct and ambient levels (linear, 1.0 = white).
 const lm = { sunlit: [0, 0, 0], shade: [0, 0, 0] };
@@ -636,10 +639,13 @@ if (GLB) {
   const r = writeGlb(path.resolve(GLB), { name: MAP, parts });
   console.log(`glb ${MAP}: ${r.tris} triangles, ${r.parts} meshes, ${r.materials} materials, ${(r.bytes / 1e6).toFixed(1)} MB -> ${GLB}`);
 }
-fs.writeFileSync(path.join(OUT, 'world.bin'), Buffer.concat(bins));
+const geometry = Buffer.concat(bins);
+fs.writeFileSync(path.join(OUT, 'world.bin'), geometry);
+if (geometry.length >= 100 * 1024 * 1024) fs.writeFileSync(path.join(OUT, 'world.bin.gz'), zlib.gzipSync(geometry, { level: 9 })); // GitHub's per-file limit; the server also serves packed-only geometry.
 fs.writeFileSync(path.join(OUT, 'lightmap.png'), png(AW, AH, 3, atlas));
 // radar placement from CS:S resource/overviews/<map>.txt (that folder isn't in the content dump, so the values live here)
 const OVERVIEWS = { de_dust2: { pos_x: -2476, pos_y: 3239, scale: 4.4 }, de_inferno: { pos_x: -2087, pos_y: 3870, scale: 4.9 }, cs_office: { pos_x: -1838, pos_y: 1858, scale: 4.1 },
+  de_mirage_csgo_new: { pos_x: -3230, pos_y: 1713, scale: 5 }, // From the map ZIP's embedded resource/overviews file.
   de_lake: { pos_x: -3540.9, pos_y: 244.9, scale: 12.245 }, de_nuke: { pos_x: -3453, pos_y: 2887, scale: 7 }, cs_agency: { pos_x: -2947, pos_y: 2492, scale: 5 } }; // de_lake: matches its generated overview.png
 const fogOf = (e) => (e && e.fogenable === '1' ? { color: e.fogcolor.split(' ').map((v) => Number(v) / 255), start: Number(e.fogstart), end: Number(e.fogend), max: Number(e.fogmaxdensity ?? 1) } : null);
 function sunOf(e) {
@@ -690,7 +696,7 @@ for (const w of soundFiles) {
 for (const list of Object.values(scapes)) for (const el of list) el.waves = el.waves.filter((w) => !missing.includes('sound/' + w));
 console.log(`ambience: ${zones.length} soundscape zones, ${Object.keys(scapes).length} soundscapes, ${ambients.length} ambient loops, ${soundFiles.size} sounds (${copied} new)`);
 fs.writeFileSync(path.join(OUT, 'world.json'), JSON.stringify({ sites, hostages, rescue, hurt, ambience: { zones, scapes, ambients },
-  groups: manifestGroups, props: propManifest, collision, playerOnly, movers,
+  groups: manifestGroups, props: propManifest, collision, playerOnly, movers, ladders: bspLadders(bsp),
   sky: skyCam ? { origin: skyOrigin, scale: skyScale, groups: skyManifest, props: skyPropManifest } : null,
   spawns: { ct: spawn('info_player_counterterrorist'), t: spawn('info_player_terrorist') },
   // Source linear fog (env_fog_controller for the world, sky_camera's own fog for the 3D skybox) and the sun (light_environment)

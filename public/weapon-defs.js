@@ -120,6 +120,8 @@ export const WEAPONS = {
   smokegrenade: { upper: 'GREN', name: 'Smoke Grenade', icon: 'smokegrenade', slot: 4, model: 'v_eq_smokegrenade', world: 'w_eq_smokegrenade_thrown', price: 300, grenade: 'smoke', max: 1, ...noGrenadeStats, sounds: { explode: 'smokegrenade/sg_explode', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
   molotov: { upper: 'GREN', name: 'Molotov', icon: 'molotov', slot: 4, price: 400, team: 't', grenade: 'fire', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'smokegrenade/grenade_hit1', light: 'molotov/ignite' } },
   incgrenade: { upper: 'GREN', name: 'Incendiary Grenade', icon: 'incgrenade', slot: 4, price: 600, team: 'ct', grenade: 'fire', max: 1, ...noGrenadeStats, sounds: { explode: 'hegrenade/explode3', bounce: 'smokegrenade/grenade_hit1', pin: 'pinpull' } },
+  rocket: { ...noGrenadeStats, rightHanded: true, upper: 'RIFLE', name: 'RPG-7', icon: 'rocket', slot: 1, price: 6000, projectile: 'rocket', model: 'v_rpg', world: 'w_missile_closed', dropped: 'w_rpg', speed: 210, mag: 1, reserve: 4, cycle: 1.5, reload: 5.1, deploy: 1.975, damage: 140,
+    sounds: { fire: 'RPG7/RPG7-1', deploy: 'RPG7/draw', empty: 'clipempty_rifle', reload: [[0.8, 'RPG7/put'], [2.5, 'RPG7/in'], [4.5, 'RPG7/hammer']], explode: 'hegrenade/explode3' } },
 
   // ---- the bomb (Terrorists get one per round; not for sale) ----
   c4: { upper: 'C4', name: 'C4', icon: 'c4', slot: 5, model: 'v_c4', world: 'w_c4', planted: 'w_c4_planted', c4: true, ...noGrenadeStats,
@@ -142,7 +144,7 @@ export const HITGROUP_MULT = { 1: 4, 2: 1, 3: 1.25, 4: 1, 5: 1, 6: 0.75, 7: 0.75
 const cat = (name, ids) => ({ cat: name, items: ids.map((id) => ({ id, price: WEAPONS[id].price, team: WEAPONS[id].team, name: WEAPONS[id].name, icon: WEAPONS[id].icon })) });
 export const BUY = [
   cat('Pistols', ['glock', 'usp', 'p228', 'deagle', 'elite', 'fiveseven']),
-  cat('Heavy', ['m3', 'xm1014', 'm249']),
+  cat('Heavy', ['m3', 'xm1014', 'm249', 'rocket']),
   cat('SMGs', ['mac10', 'tmp', 'mp5', 'ump45', 'p90']),
   cat('Rifles', ['galil', 'famas', 'ak47', 'm4a1', 'aug', 'sg552', 'scout', 'sg550', 'g3sg1', 'awp']),
   { cat: 'Gear', items: [{ id: 'kevlar', name: 'Kevlar Vest', icon: 'kevlar', glyph: 't', price: 650 }, { id: 'vesthelm', name: 'Kevlar + Helmet', icon: 'kevlar', glyph: 'u', price: 1000 }, { id: 'defuser', name: 'Defuse Kit', icon: 'defuser', price: 200, team: 'ct' }, ...GRENADES.map((id) => ({ id, price: WEAPONS[id].price, team: WEAPONS[id].team, name: WEAPONS[id].name, icon: WEAPONS[id].icon }))] },
