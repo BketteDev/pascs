@@ -10,7 +10,7 @@ const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -
 
 export function loadOrBuildNav(world, spawns, mapDir) {
   const file = path.join(mapDir, 'nav.json');
-  try { return fromJson(JSON.parse(fs.readFileSync(file, 'utf8'))); } catch { /* build below */ }
+  try { return fromJson(cleanNav(world, JSON.parse(fs.readFileSync(file, 'utf8')))); } catch { /* build below */ }
   const t0 = performance.now(), nav = build(world, spawns);
   fs.writeFileSync(file, JSON.stringify({ nodes: nav.nodes.map((n) => n.o.map((v) => Math.round(v * 10) / 10)), edges: nav.edges }));
   console.log(`nav built: ${nav.nodes.length} nodes in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
@@ -62,6 +62,22 @@ function build(world, spawns) {
     }
   }
   return fromJson({ nodes: nodes.map((n) => n.o), edges });
+}
+
+/** Cached graphs can outlive collision changes. Remove embedded nodes and dangling edges.
+ * Call with usable doors and breakable glass removed, as the normal nav builder does.
+ * Never add a shortcut through a wall or rewrite a mounted asset on server startup. */
+export function cleanNav(world, data) {
+  if (!Array.isArray(data.nodes) || !Array.isArray(data.edges) || data.nodes.length !== data.edges.length) throw new Error('Invalid navigation graph');
+  const remap = new Map(), nodes = [];
+  for (const [i, o] of data.nodes.entries()) {
+    if (!Array.isArray(o) || o.length !== 3 || !o.every(Number.isFinite)) continue;
+    const p = [o[0], o[1], o[2] + 2];
+    if (trace(world, p, p, [-16, -16, 0], [16, 16, 62]).startSolid) continue;
+    remap.set(i, nodes.length); nodes.push(o);
+  }
+  const edges = [...remap.keys()].map((i) => (data.edges[i] ?? []).filter(([n]) => remap.has(n)).map(([n, jump]) => [remap.get(n), jump ? 1 : 0]));
+  return { nodes, edges };
 }
 
 function fromJson({ nodes, edges }) {

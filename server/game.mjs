@@ -12,6 +12,7 @@ import fs from 'fs';
 import { randomBytes } from 'node:crypto';
 import { freshAmmo, advanceAmmo, reloadAmmo, consumeAmmo } from '../public/ammo.js';
 import path from 'path';
+import { resolveSpawn } from '../public/spawn.js';
 import { Player, makeWorld, trace, TICK, TICK_RATE } from '../public/physics.js';
 import { createMovers } from '../public/movers.js';
 import { WEAPONS, HITGROUP_MULT, BUY, START_MONEY, MAX_MONEY, BUY_TIME, REWARD, DEFAULT_PISTOL, GRENADE, BOMB, canCarryGrenade } from '../public/weapon-defs.js';
@@ -36,17 +37,12 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   const movers = createMovers(world, worldJson.movers); // doors + breakable glass (entries inside world.collision)
   const spawns = {};
   for (const team of ['ct', 't', 'h']) {
-    spawns[team] = (team === 'h' ? worldJson.hostages ?? [] : worldJson.spawns[team]).map((s) => { // spawn origins float above the floor (or sit inside rough terrain): lift until clear, then drop onto the floor
-      let start = s.o;
-      for (const lift of [0, 16, 32, 64, 96, 128]) { start = [s.o[0], s.o[1], s.o[2] + lift]; if (!trace(world, start, start, [-16, -16, 0], [16, 16, 62], bulletLimit).startSolid) break; }
-      const r = trace(world, start, [start[0], start[1], start[2] - 400], [-16, -16, 0], [16, 16, 62], bulletLimit);
-      return { o: [s.o[0], s.o[1], r.end[2] + 0.5], yaw: (s.yaw * Math.PI) / 180 };
-    });
+    spawns[team] = (team === 'h' ? worldJson.hostages ?? [] : worldJson.spawns[team]).map((s) => ({ o: resolveSpawn(world, s.o), yaw: (s.yaw * Math.PI) / 180 }));
   }
   const bulletCtx = { world, limit: bulletLimit, surfOf: worldJson.surfOf, surfaces: worldJson.surfaces };
   const allSpawns = [...spawns.ct, ...spawns.t, ...spawns.h];
-  // bots path through doors (they open them on the way): the nav graph is built with every door gone
-  const opens = (d) => d.kind === 'door' && !d.locked, doorIdx = movers.defs.filter((d) => opens(d) || (d.parent >= 0 && opens(movers.defs[d.parent]))).flatMap((d) => d.entries), shut = doorIdx.map((i) => world.entries[i]);
+  // Bots open doors and break glass on the way; validate/build paths with those obstacles removed.
+  const opens = (d) => (d.kind === 'door' && !d.locked) || (d.breakable && d.glass), doorIdx = movers.defs.filter((d) => opens(d) || (d.parent >= 0 && opens(movers.defs[d.parent]))).flatMap((d) => d.entries), shut = doorIdx.map((i) => world.entries[i]);
   for (const i of doorIdx) world.entries[i] = Float32Array.from([1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
   const nav = loadOrBuildNav(world, allSpawns, mapDir);
   doorIdx.forEach((i, k) => { world.entries[i] = shut[k]; });

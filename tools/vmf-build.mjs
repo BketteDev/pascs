@@ -1,3 +1,4 @@
+import { resolveSpawn } from '../public/spawn.js';
 import { mapDetails, mapFolder } from '../public/maps.js';
 // Builds a web map (public/maps/<name>/) from a decompiled Source map (.vmf), e.g. the CS:GO maps in reference/decompiled-csgo-maps.
 // Usage: node tools/vmf-build.mjs <map.vmf> <name> [--bsp map.bsp] [--mode wingman]
@@ -457,13 +458,7 @@ const worldJson = {
 const navWorld = makeWorld(collision.concat(playerOnly));
 const doorEntries = movers.filter((mv) => (mv.kind === 'door' && !mv.locked) || (mv.breakable && mv.glass)).flatMap((mv) => mv.entries);
 for (const idx of doorEntries) navWorld.entries[idx] = Float32Array.from([1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
-const allSpawns = [...spans.ct, ...spans.t, ...hostages].map((s, idx) => {
-  let start = s.o, clear = false;
-  for (const lift of [0, 16, 32, 64, 96, 128]) { start = [s.o[0], s.o[1], s.o[2] + lift]; if (!trace(navWorld, start, start, [-16, -16, 0], [16, 16, 62]).startSolid) { clear = true; break; } }
-  if (!clear) throw new Error(`${MAP} spawn #${idx} trapped startSolid at ${s.o.join(',')}`);
-  const r = trace(navWorld, start, [start[0], start[1], start[2] - 400], [-16, -16, 0], [16, 16, 62]);
-  return { o: [s.o[0], s.o[1], r.end[2] + 0.5], yaw: (s.yaw * Math.PI) / 180 };
-});
+const allSpawns = [...spans.ct, ...spans.t, ...hostages].map((s) => ({ o: resolveSpawn(navWorld, s.o), yaw: (s.yaw * Math.PI) / 180 }));
 fs.rmSync(path.join(OUT, 'nav.json'), { force: true });
 const nav = loadOrBuildNav(navWorld, allSpawns, OUT);
 const navPts = nav.nodes.length ? nav.nodes.map((n) => n.o) : allSpawns.map((s) => s.o);
