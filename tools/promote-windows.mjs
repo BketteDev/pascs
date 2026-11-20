@@ -1,3 +1,4 @@
+import { MAPS, mapFolder } from '../public/maps.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -109,7 +110,7 @@ function writeKeptTriangles(bin, item, keptTris, isGroup) {
 }
 
 export function promoteMapWindows(mapName, { dryRun = false } = {}) {
-  const mapDir = path.join(ROOT, mapName);
+  const mapDir = path.join(ROOT, mapFolder(mapName));
   const worldPath = path.join(mapDir, 'world.json');
   const binPath = path.join(mapDir, 'world.bin');
   const world = JSON.parse(fs.readFileSync(worldPath, 'utf8'));
@@ -286,7 +287,7 @@ export function promoteMapWindows(mapName, { dryRun = false } = {}) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dryRun = process.argv.includes('--dry-run');
   const args = process.argv.slice(2).filter((a) => a !== '--dry-run');
-  const maps = !args.length || args[0] === 'all' ? ['de_dust2', 'de_lake', 'cs_office', 'de_inferno', 'de_nuke', 'cs_agency', 'de_mirage', 'de_overpass', 'de_shortdust', 'de_bank', 'cs_italy', 'de_shortnuke'] : args;
+  const maps = !args.length || args[0] === 'all' ? MAPS.map((m) => m.directory) : args;
   for (const m of maps) {
     const res = promoteMapWindows(m, { dryRun });
     console.log(`${dryRun ? '[DRY] ' : ''}${res.mapName}: hpFixed=${res.hpFixed}, addedMovers=${res.addedMovers}, totalBreakables=${res.totalBreakables}, entries=${res.addedEntries.slice(0, 12).join(',')}${res.addedEntries.length > 12 ? ` (+${res.addedEntries.length - 12})` : ''}`);

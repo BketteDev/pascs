@@ -1,9 +1,10 @@
 <!doctype html>
+<html lang="fr">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>CS:S Web - de_dust2</title>
+<title>CS:S Web</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font: 14px monospace; color: #fff; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   canvas { display: block; touch-action: none; }
@@ -143,8 +144,8 @@
   /* Options / name windows: CS:S's olive VGUI */
   .mm-win { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(640px, 94vw); background: #4c5844; border: 1px solid #889180; box-shadow: 0 0 0 1px #292c21, 0 8px 30px rgba(0,0,0,.6); font: 13px Tahoma, Verdana, sans-serif; color: #d8ded3; }
   .vg-title { padding: 8px 12px; font-weight: bold; color: #f0f0e8; display: flex; justify-content: space-between; } .vg-title i { font-style: normal; cursor: pointer; color: #b8bfb2; }
-  .vg-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid #889180; } .vg-tabs span { padding: 5px 14px; background: #3e4637; border: 1px solid #889180; border-bottom: 0; cursor: pointer; color: #b8bfb2; }
-  .vg-tabs span.on { background: #4c5844; color: #f0f0e8; position: relative; top: 1px; }
+  .vg-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid #889180; } .vg-tabs button { padding: 5px 14px; background: #3e4637; border: 1px solid #889180; border-bottom: 0; cursor: pointer; color: #b8bfb2; }
+  .vg-tabs button.on { background: #4c5844; color: #f0f0e8; position: relative; top: 1px; }
   .vg-body { padding: 10px 14px; } .vg-page { padding: 14px 6px; min-height: 160px; display: flex; flex-direction: column; gap: 12px; }
   .vg-row { display: grid; grid-template-columns: 180px 1fr 54px; align-items: center; gap: 10px; } .vg-row output { text-align: right; color: #f0f0e8; }
   .vg-check { grid-template-columns: 20px 1fr; } .vg-row select, .vg-text { background: #3e4637; color: #f0f0e8; border: 1px solid #889180; padding: 3px 6px; font: inherit; }
@@ -248,7 +249,7 @@
     .mm-item { width: min(320px, 82vw); padding: 8px 14px; font-size: 17px; }
     .mm-win { max-height: 92dvh; display: flex; flex-direction: column; }
     .vg-tabs { flex-wrap: wrap; }
-    .vg-tabs span { padding: 5px 9px; font-size: 12px; }
+    .vg-tabs button { padding: 5px 9px; font-size: 12px; }
     .vg-page { max-height: 55dvh; }
     .vg-row { grid-template-columns: 120px 1fr 44px; gap: 6px; }
     .vg-keys { grid-template-columns: 1fr; }
@@ -292,7 +293,8 @@
 #loading { gap: 12px; padding: 20px; box-sizing: border-box; text-align: center; }
 #loadstatus { margin: 0; max-width: min(90vw, 560px); overflow-wrap: anywhere; font: 14px/1.5 Verdana, sans-serif; color: #ddd; }
 #loadelapsed { margin: 0; color: #aaa; font-size: 12px; }
-#loadretry { cursor: pointer; padding: 10px 18px; border: 1px solid #aa8446; background: #29251e; color: #ffd27a; border-radius: 4px; }
+.vg-button, #loadretry { cursor: pointer; padding: 8px 18px; min-height: 44px; font: 14px Tahoma, Verdana, sans-serif; background: #4c5844; color: #f0f0e8; border: 1px solid; border-color: #889180 #292c21 #292c21 #889180; border-radius: 0; box-shadow: 0 0 0 1px #292c21; }
+.vg-button:hover, #loadretry:hover { background: #5a684f; }
 #loading.failed #loadstatus { color: #ffb5a9; }
 .mm-win[hidden] { display: none; }
 .mm-items { bottom: 4%; overflow-y: auto; }
@@ -306,12 +308,13 @@
 .touch-editor .layout-target { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; width: 66px; height: 66px; padding: 2px; font-size: 11px; }
 </style>
 <link rel="stylesheet" href="ui/go-hud.css">
+<link rel="stylesheet" href="ui/accessibility.css">
 <div id="loading">
   <span class="agent">-</span><!-- the agent glyph of the CS logo font (cslogo.ttf) -->
   <div class="bar" role="progressbar" aria-label="Loading"><div id="loadfill"></div></div>
   <p id="loadstatus" role="status" aria-live="polite">Connecting to the server…</p>
   <p id="loadelapsed"></p>
-  <button id="loadretry" type="button">Réessayer / Retry</button>
+  <button id="loadretry" class="vg-button" type="button">Réessayer la connexion</button>
 </div>
 <div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="devpanel"></div><div id="debugout"></div><div id="scope"><div class="box"><i class="arc tl"></i><i class="arc tr"></i><i class="arc bl"></i><i class="arc br"></i></div></div>
 <canvas id="radar"></canvas>
@@ -347,3 +350,4 @@
   await import('./game.js');
   } catch (error) { fail(error); }
 </script>
+</html>

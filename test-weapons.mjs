@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { createWeapons } from './public/weapons.js';
 import { Player, makeWorld } from './public/physics.js';
 const old = { document: globalThis.document, add: globalThis.addEventListener, fetch: globalThis.fetch, window: globalThis.window, now: performance.now, texture: THREE.TextureLoader.prototype.load };
-let clock = 2000, canFire = true;
+let clock = 2000, canFire = true, repeat = false;
 const messages = [], ammoReadings = [];
 const net = { connected: true, actionSeq: 0, ammoShots: [], send(m) { if (!this.connected) return false; const seq = ++this.actionSeq; if (m.t === 'fire') this.ammoShots.push({ seq, w: m.w }); messages.push({ ...m, aq: seq }); return true; } };
 const activities = ['ACT_VM_IDLE', 'ACT_VM_DRAW', 'ACT_VM_RELOAD', 'ACT_VM_PRIMARYATTACK', 'ACT_VM_DRYFIRE', 'ACT_SHOTGUN_RELOAD_START', 'ACT_SHOTGUN_RELOAD_FINISH'];
@@ -29,7 +29,7 @@ try {
   performance.now = () => clock;
   const player = new Player(makeWorld([]));
   const hud = new Proxy({}, { get: (_, key) => key === 'setAmmo' ? (...values) => ammoReadings.push(values) : () => {} });
-  const weapons = await createWeapons({ player, world: player.world, worldRoot: new THREE.Group(), renderer: {}, loadTex() {}, hud, net, targets: () => null, uiOpen: () => false, alive: () => true, canFire: () => canFire && net.connected, initial: { owned: ['usp', 'knife', 'm3', 'rocket'], weapon: 'usp' } });
+  const weapons = await createWeapons({ player, world: player.world, worldRoot: new THREE.Group(), renderer: {}, loadTex() {}, hud, net, targets: () => null, uiOpen: () => false, alive: () => true, canFire: () => canFire && net.connected, repeatPrimary: () => repeat, initial: { owned: ['usp', 'knife', 'm3', 'rocket'], weapon: 'usp' } });
   const update = (ms) => { clock += ms; weapons.update(ms / 1000); };
   update(1200);
   weapons.primaryDown(); weapons.primaryUp();
@@ -55,6 +55,9 @@ try {
   net.connected = true; canFire = false; weapons.state.held = true; update(500);
   assert.equal(weapons.ammo.usp.mag, 12, 'freeze/menu gating also applies to automatic updates');
   canFire = true;
+  repeat = true; weapons.syncAmmo({ usp: { mag: 12, reserve: 43 } }, net.actionSeq);
+  weapons.primaryDown(); update(200); update(200); weapons.primaryUp();
+  assert(weapons.ammo.usp.mag <= 9, 'mobile hold-to-fire repeats semi-automatic shots at the weapon cadence');
   weapons.select('knife'); await new Promise((resolve) => setImmediate(resolve));
   weapons.setLoadout(['usp', 'knife', 'm3', 'rocket'], 'usp', true);
   assert.equal(weapons.state.cur, 'usp', 'reconnection restores the authoritative equipped weapon');

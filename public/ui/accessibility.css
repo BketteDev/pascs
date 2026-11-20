@@ -1,0 +1,75 @@
+/* Shared VGUI controls and readable mobile overlays. Loaded after the HUD theme. */
+:root { --ui-scale: 1; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 3px solid #f2d182; outline-offset: 3px;
+}
+.mm-item { background: transparent; border: 0; color: inherit; text-align: left; font-family: inherit; }
+.vg-close { padding: 4px 10px; color: #f0f0e8; background: #3e4637; border: 1px solid #889180; }
+.vg-tabs button { font: inherit; color: #d8ded3; }
+.vg-page > button { min-height: 44px; padding: 8px; background: #3e4637; color: #f0f0e8; border: 1px solid #889180; }
+.vg-row, .vg-guide { font-size: calc(13px * var(--ui-scale)); }
+.vg-row input:not([type=checkbox]):not([type=color]), .vg-row select { min-width: 0; }
+.tm-btn { background: #3e4637; border: 1px solid #889180; padding: 10px 14px; font: inherit; }
+.tm-auto { background: #4c5844; color: #f0f0e8; min-height: 48px; }
+#touch-more[hidden], [data-act=more][hidden] { display: none; }
+#touch-more { position: fixed; right: calc(12px + env(safe-area-inset-right)); top: calc(64px + env(safe-area-inset-top)); z-index: 12; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; background: #4c5844; border: 1px solid #889180; box-shadow: 0 8px 24px #000a; pointer-events: auto; }
+#touch-more button { min-height: 48px; padding: 8px 14px; background: #3e4637; color: #f0f0e8; border: 1px solid #889180; }
+.simple-controls #touch-top :is([data-act=scores], [data-act=team], [data-act=chat]) { display: none; }
+.simple-controls #touch-actions { width: 240px; height: 220px; }
+.simple-controls #touch-fire-r { width: 84px; height: 84px; right: 4px; bottom: 8px; }
+.simple-controls #touch-jump { width: 68px; height: 54px; right: 12px; bottom: 112px; }
+.simple-controls #touch-duck { width: 78px; height: 50px; right: 104px; bottom: 10px; }
+.simple-controls #touch-reload { width: 96px; height: 48px; right: 102px; bottom: 74px; border-radius: 12px; }
+.simple-controls #touch-use { width: 106px; height: 46px; right: 126px; bottom: 138px; }
+.simple-controls #touch-alt { width: 72px; height: 44px; right: 44px; bottom: 174px; }
+body.touch-mode :is(.t-pill, .t-wep) { min-height: calc(44px * var(--ui-scale)); font-size: calc(12px * var(--ui-scale)); box-sizing: border-box; }
+body.touch-mode .t-btn { min-height: 44px; font-size: calc(11px * var(--ui-scale)); }
+body.touch-mode #touch-top { gap: 8px; }
+body.touch-mode #touch-weapons { max-width: calc(100vw - 310px); }
+body.touch-mode #netwarn { top: calc(68px + env(safe-area-inset-top)); max-width: 80vw; font-size: 13px; }
+body.touch-mode .vg-tabs button { min-height: 44px; padding: 8px 10px; }
+body.touch-mode .vg-buttons button, body.touch-mode .vg-key button { min-height: 44px; }
+body.touch-mode .vg-row input[type=checkbox] { width: 24px; height: 24px; accent-color: #d4c389; }
+body.touch-mode .vg-check { grid-template-columns: 28px 1fr; }
+body.touch-mode .vg-row input[type=range] { min-height: 40px; width: 100%; }
+body.touch-mode .vg-tabs { overflow-x: auto; flex-wrap: nowrap; flex-shrink: 0; }
+body.touch-mode .vg-tabs button { flex-shrink: 0; }
+.mobile-shop { background: #050709a8; pointer-events: auto !important; }
+.mobile-buy { position: absolute; inset: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); margin: auto; max-width: 760px; max-height: 620px; display: flex; flex-direction: column; text-align: left; background: #4c5844; color: #f0f0e8; border: 1px solid #889180; box-shadow: 0 6px 30px #000a; font: calc(14px * var(--ui-scale))/1.4 Tahoma, Arial, sans-serif; touch-action: pan-y; }
+.mobile-buy header { display: flex; gap: 12px; align-items: center; padding: 10px; flex-shrink: 0; }
+.mobile-buy h2 { margin: 0; font-size: 18px; flex: 1; }
+.mobile-buy button { min-height: 48px; padding: 10px; color: #f0f0e8; background: #3e4637; border: 1px solid; border-color: #889180 #292c21 #292c21 #889180; font: inherit; }
+.mobile-buy button:active { background: #637057; }
+.mobile-buy button:disabled { color: #bcc4b5; background: #424b3b; border-color: #59614e; }
+.mobile-buy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; padding: 10px; overflow-y: auto; min-height: 0; }
+.mobile-buy-grid button { min-height: 72px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 5px; }
+.mobile-buy small { display: block; color: #e2d29e; font-size: 12px; }
+.mobile-buy .buy-recommended { margin: 0 10px 4px; text-align: left; background: #596448; flex-shrink: 0; }
+.mobile-buy footer { padding: 8px 10px; margin-top: auto; flex-shrink: 0; }
+.mobile-buy footer button { width: 100%; }
+body.legible-hud :is(.panel .num, #roundtime, #money, #roundscore) { font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; font-weight: bold; }
+body.high-contrast { --go-panel: rgba(3, 7, 10, .95); --go-hud: #fff; --go-line: #ccd4d9; }
+body.high-contrast :is(.t-btn, .t-pill, .t-wep) { background: #101922ed; color: #fff; border-color: #e8e4ce; opacity: 1; }
+body.high-contrast :is(.vg-row, .vg-guide) { color: #fff; }
+body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+@media (max-width: 540px) {
+  body.touch-mode #touch-weapons { bottom: calc(238px + env(safe-area-inset-bottom)); max-width: calc(100vw - 20px); gap: 6px; }
+  body.touch-mode #roundbar { top: calc(66px + env(safe-area-inset-top)); }
+  body.touch-mode #feed { top: calc(112px + env(safe-area-inset-top)); }
+  .mobile-buy-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mobile-buy header { gap: 8px; }
+  .mobile-buy header h2 { font-size: 16px; }
+}
+body.touch-mode .vg-close { min-width: 44px; min-height: 44px; }
+body.touch-mode .mm-item { min-height: 44px; }
+body.touch-mode .mm-win .vg-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+body.touch-mode .mm-win .vg-title, body.touch-mode .mm-win .vg-buttons { flex-shrink: 0; align-items: center; }
+body.touch-mode .mm-win .vg-page { max-height: none; min-height: 0; }
+body.touch-mode .mm-win .vg-tabs { position: sticky; top: 0; background: #4c5844; z-index: 1; }
+body.touch-mode .t-btn { overflow-wrap: anywhere; line-height: 1.15; text-align: center; }

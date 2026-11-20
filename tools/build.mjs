@@ -1,3 +1,4 @@
+import { mapDetails, mapFolder } from '../public/maps.js';
 // Converts content/maps/<map>.bsp + VMT/VTF materials into web-ready assets (public/maps/<map>/*).
 // Usage: node tools/build.mjs [map]   (default de_dust2)
 import fs from 'fs';
@@ -16,10 +17,11 @@ import { promoteMapWindows } from './promote-windows.mjs';
 import { bspLadders } from './ladder-data.mjs';
 import { fillMirageAmmo } from './mirage-ammo.mjs';
 
-const MAP = process.argv[2] || 'de_dust2';
+const MAP = mapDetails(process.argv[2] || 'de_dust2')?.id;
+if (!MAP) throw new Error('Invalid map name');
 const ROOT = path.resolve(import.meta.dirname, '..', '..', 'content');
 const argOf = (flag) => { const i = process.argv.indexOf(flag); return i > 0 ? process.argv[i + 1] : null; };
-const OUT = argOf('--out') ? path.resolve(argOf('--out')) : path.resolve(import.meta.dirname, '..', 'public', 'maps', MAP); // --out <dir>: write assets elsewhere
+const OUT = argOf('--out') ? path.resolve(argOf('--out')) : path.resolve(import.meta.dirname, '..', 'public', 'maps', mapFolder(MAP)); // --out <dir>: write assets elsewhere
 const GLB = argOf('--glb'); // --glb <file.glb>: also export the map (world + props, textured) as a glTF binary
 fs.mkdirSync(path.join(OUT, 'tex'), { recursive: true });
 

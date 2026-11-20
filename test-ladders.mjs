@@ -39,7 +39,7 @@ for(const name of fs.readdirSync(mapRoot)) {
     }
     assert(climbed,'a clear side of the real ladder can be climbed: '+name+' '+JSON.stringify(l));total++;
   }
-  if(name==='de_mirage_csgo_new') {
+  if(name==='GO-Mirage') {
     const sourceBsp=path.join(import.meta.dirname,'../exports/asset-import/mapcs/MIRAGE MAP/de_mirage_csgo_new.bsp');
     if(fs.existsSync(sourceBsp))assert.deepEqual(j.ladders,bspLadders(fs.readFileSync(sourceBsp)));
     for(const [i,l] of j.ladders.entries()) {

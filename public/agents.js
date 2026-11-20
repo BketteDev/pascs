@@ -1,3 +1,4 @@
+import { mapDetails } from './maps.js';
 // Which character models ("agents") each map uses per team. Like CS:GO, every map has its own pair; unlisted maps use everything.
 export const AGENT_NAMES = {
   ct_gign: 'GIGN', ct_gsg9: 'GSG-9', ct_sas: 'SAS', ct_urban: 'Seal Team Six',
@@ -17,4 +18,4 @@ export const MAP_AGENTS = {
   default: { ct: ['ct_gign', 'ct_gsg9', 'ct_sas', 'ct_urban'], t: ['t_arctic', 't_guerilla', 't_leet', 't_phoenix'] },
 };
 const HOSTAGES = ['hostage_01', 'hostage_02', 'hostage_03', 'hostage_04']; // team 'h' on hostage rescue maps
-export const agentsFor = (map, team) => (team === 'h' ? HOSTAGES : (MAP_AGENTS[map] ?? MAP_AGENTS.default)[team]);
+export const agentsFor = (map, team) => (team === 'h' ? HOSTAGES : (MAP_AGENTS[mapDetails(map)?.id] ?? MAP_AGENTS.default)[team]);

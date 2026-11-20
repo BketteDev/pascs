@@ -17,8 +17,22 @@ function icon(it, x, y) {
   if (!font) return `<image href="ui/icons/${it.icon}.png" x="${x - 52}" y="${y - 24}" width="104" height="52" preserveAspectRatio="xMidYMid meet"/>`;
   return `<text x="${x}" y="${(y + glyphMid(font, ch) * ICON_PX).toFixed(1)}" class="gl" style="font-family: ${font}; font-size: ${ICON_PX}px">${ch}</text>`;
 }
-export function createBuyMenu({ net, getState, canOpen = () => !!document.pointerLockElement }) {
+// A visible, one-tap proposal; the server still validates each individual purchase.
+export function suggestedPurchases(st) {
+  let money = st.money;
+  const result = [], owned = st.owned ?? [];
+  const add = (id, price = WEAPONS[id]?.price) => { if (money >= price) { result.push({ id, price }); money -= price; } };
+  if (!owned.some((id) => WEAPONS[id]?.slot === 1)) {
+    for (const id of [st.team === 'ct' ? 'm4a1' : 'ak47', 'mp5']) if (money >= WEAPONS[id].price) { add(id); break; }
+  }
+  if (st.armor < 100) { if (money >= 1000) add('vesthelm', 1000); else add('kevlar', 650); }
+  else if (!st.helmet) add('vesthelm', 350);
+  if (st.team === 'ct' && !st.kit) add('defuser', 200);
+  return result;
+}
+export function createBuyMenu({ net, getState, canOpen = () => !!document.pointerLockElement, isMobile = () => false }) {
   const el = document.getElementById('buymenu');
+  let mobileSignature = '';
   let level = null, hover = -1, cx = 0, cy = 0; // level: null closed, -1 categories, n = BUY[n]
   const mine = (it) => !it.team || it.team === getState().team; // the other team's weapons are not shown at all
   const entries = () => (level === -1 ? BUY.map((c) => { const it = c.items.find(mine) ?? c.items[0]; return { label: c.cat, icon: it.icon, glyph: it.glyph, cat: true }; }) : BUY[level].items.filter(mine));
@@ -34,6 +48,8 @@ export function createBuyMenu({ net, getState, canOpen = () => !!document.pointe
     return w.grenade ? canCarryGrenade(st.gr ?? {}, it.id) : !st.owned.includes(it.id);
   };
   function render() {
+    if (isMobile()) { renderMobile(); return; }
+    el.classList.remove('mobile-shop');
     const list = entries(), n = list.length, step = (Math.PI * 2) / n, st = getState();
     let svg = `<circle cx="${C}" cy="${C}" r="${R1}" class="disc"/>`;
     list.forEach((it, i) => {
@@ -58,7 +74,23 @@ export function createBuyMenu({ net, getState, canOpen = () => !!document.pointe
         : `<text x="${C}" y="${C + 68}" class="key">${level === -1 ? 'CLOSE' : 'BACK'}</text>`);
     el.innerHTML = `<svg viewBox="0 0 ${W} ${W}" width="${W}" height="${W}">${svg}</svg>`;
   }
-  const open = () => { level = -1; hover = -1; cx = cy = 0; el.style.display = 'block'; el.classList.add('open'); render(); };
+  function renderMobile() {
+    const st = getState(), signature = JSON.stringify([level, st.money, st.armor, st.helmet, st.kit, st.owned, st.gr]);
+    el.classList.add('mobile-shop');
+    if (signature === mobileSignature) return;
+    mobileSignature = signature;
+    const names = { Pistols: 'Pistolets', Heavy: 'Armes lourdes', SMGs: 'Mitraillettes', Rifles: 'Fusils', Gear: 'Équipement' };
+    const picks = suggestedPurchases(st), total = picks.reduce((sum, p) => sum + p.price, 0);
+    const label = (id) => WEAPONS[id]?.name ?? ({ vesthelm: 'Gilet + casque', kevlar: 'Gilet', defuser: 'Kit de désamorçage' })[id];
+    el.innerHTML = `<section class="mobile-buy" role="dialog" aria-label="Acheter de l’équipement">
+      <header><button type="button" data-shop="back">${level === -1 ? 'Fermer' : 'Retour'}</button><h2>${level === -1 ? 'Acheter' : (names[BUY[level].cat] ?? BUY[level].cat)}</h2><strong aria-label="Argent disponible">$${st.money}</strong></header>
+      ${level === -1 && picks.length ? `<button type="button" class="buy-recommended" data-shop="recommended">Équipement conseillé · $${total}<small>${picks.map((p) => label(p.id)).join(' + ')}</small></button>` : ''}
+      <div class="mobile-buy-grid">${entries().map((it, i) => {
+        const ok = usable(it), status = it.cat ? 'Voir les armes' : st.money < it.price ? 'Solde insuffisant' : !ok ? 'Déjà équipé / limite atteinte' : `$${it.price}`;
+        return `<button type="button" data-choice="${i}" ${ok ? '' : 'disabled'}><span>${it.cat ? (names[it.label] ?? it.label) : it.name}</span><small>${status}</small></button>`;
+      }).join('')}</div><footer><button type="button" data-shop="close">Reprendre la partie</button></footer></section>`;
+  }
+  const open = () => { mobileSignature = ''; level = -1; hover = -1; cx = cy = 0; el.style.display = 'block'; el.classList.add('open'); render(); };
   const close = () => { level = null; el.style.display = 'none'; el.classList.remove('open'); };
   const back = () => { if (level === -1) close(); else { level = -1; hover = -1; render(); } };
   function choose(i) {
@@ -99,13 +131,13 @@ export function createBuyMenu({ net, getState, canOpen = () => !!document.pointe
   }, { capture: true });
   let touchHandled = false;
   el.addEventListener('touchstart', (e) => {
-    if (level === null || document.pointerLockElement) return;
+    if (level === null || document.pointerLockElement || isMobile()) return;
     const t = e.changedTouches[0]; if (!t) return;
     const hit = wedgeAt(t.clientX, t.clientY);
     if (hit.idx !== hover) { hover = hit.idx; render(); }
   }, { passive: true });
   el.addEventListener('touchend', (e) => {
-    if (level === null || document.pointerLockElement) return;
+    if (level === null || document.pointerLockElement || isMobile()) return;
     const t = e.changedTouches[0]; if (!t) return;
     touchHandled = true;
     e.preventDefault(); e.stopPropagation();
@@ -116,6 +148,15 @@ export function createBuyMenu({ net, getState, canOpen = () => !!document.pointe
   }, { passive: false });
   el.addEventListener('click', (e) => {
     if (level === null || document.pointerLockElement) return;
+    if (isMobile()) {
+      const button = e.target.closest?.('button'); if (!button || button.disabled) return;
+      e.stopPropagation();
+      if (button.dataset.choice !== undefined) choose(Number(button.dataset.choice));
+      else if (button.dataset.shop === 'close') close();
+      else if (button.dataset.shop === 'back') back();
+      else if (button.dataset.shop === 'recommended') { for (const item of suggestedPurchases(getState())) net.send({ t: 'buy', item: item.id }); }
+      return;
+    }
     if (touchHandled) { touchHandled = false; return; }
     e.stopPropagation();
     const hit = wedgeAt(e.clientX, e.clientY);

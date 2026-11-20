@@ -8,7 +8,7 @@ const listeners={},events={},sent=[];
 const el={style:{},classList:{add(){},remove(){}},addEventListener:(n,fn)=>events[n]=fn,querySelector:()=>({getBoundingClientRect:()=>({left:0,top:0,width:660})})};
 globalThis.document={pointerLockElement:null,getElementById:()=>el,fonts:{check:()=>false,load:()=>Promise.resolve()},createElement:()=>({getContext:()=>({})}),addEventListener(){}};
 globalThis.addEventListener=(n,fn)=>listeners[n]=fn;
-const game=createGame({mapDir:path.join(import.meta.dirname,'public/maps/de_dust2'),bots:false,teamSize:2});
+const game=createGame({mapDir:path.join(import.meta.dirname,'public/maps/Source-Dust2'),bots:false,teamSize:2});
 const ws=new EventEmitter();ws.readyState=1;ws.ping=()=>ws.emit('pong');let snap;
 ws.send=raw=>{const m=JSON.parse(raw);if(m.t==='snap')snap=m;};
 const send=m=>{sent.push(m);ws.emit('message',JSON.stringify(m));};

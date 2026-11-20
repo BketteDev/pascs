@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mapFolder } from './maps.js';
 import { Player, TICK, makeWorld, trace } from './physics.js';
 import { createWeapons } from './weapons.js';
 import { createPlayers } from './players.js';
@@ -20,7 +21,7 @@ import { createTouchControls } from './touch.js';
 import { createChat } from './chat.js';
 
 const q = new URLSearchParams(location.search);
-const MAP_NAME = /^[a-z0-9_]+$/.test(window.__map ?? '') ? window.__map : 'de_dust2'; // the server's map (server.config.json): public/maps/<name>/; also picks the map's agents (agents.js)
+const MAP_NAME = mapFolder(window.__map) ?? 'Source-Dust2'; // the server's map (server.config.json): public/maps/<name>/; also picks the map's agents (agents.js)
 document.title = 'CS:S Web - ' + MAP_NAME;
 // loading screen: staged progress, hidden once every texture has reached the GPU
 const loadingEl = document.getElementById('loading');
@@ -392,6 +393,9 @@ let devPanel = null;
 let settings = loadSettings();
 function applySettings(s) {
   settings = { ...settings, ...s };
+  for (const [key, cls] of [['highContrast', 'high-contrast'], ['reduceMotion', 'reduce-motion'], ['legibleHud', 'legible-hud']]) document.body.classList.toggle(cls, !!settings[key]);
+  document.documentElement.style.setProperty('--ui-scale', String(settings.uiScale ?? 1));
+  document.getElementById('flash').style.background = settings.darkFlash ? '#050607' : '#fff';
   setVolumes({ master: settings.master, ambience: settings.ambience });
   renderer.domElement.style.filter = settings.brightness === 1 ? '' : `brightness(${settings.brightness})`;
   if (renderer.getPixelRatio() !== pixelRatio(settings.renderScale)) renderer.setPixelRatio(pixelRatio(settings.renderScale));
@@ -415,12 +419,12 @@ mainMenu = createMainMenu({
   onQuit: quitGame, // a tab the user opened can't always close itself: wipe and leave immediately
   onSettings: applySettings,
   onCosmetic: (key) => weapons?.refreshCosmetic(key),
-  onTouchLayout: () => { mainMenu.close(); touch?.editLayout(() => mainMenu.open()); },
+  onTouchLayout: () => { document.exitPointerLock?.(); mainMenu.close(); touch?.editLayout(() => mainMenu.open()); },
 });
 const uiOpen = () => !!(touch?.isEditing() || buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen() || chat?.isOpen());
 const canPlay = () => net.connected && !uiOpen() && (!!document.pointerLockElement || !!(touch?.isEnabled() && joined));
 setLoad(45, 'Loading weapons...');
-weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, canFire: () => canPlay() && roundState.phase === 'live', initial: { owned: you.owned, weapon: you.weapon } });
+weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, canFire: () => canPlay() && roundState.phase === 'live', repeatPrimary: () => !!touch?.isEnabled() && settings.touchRepeatFire !== false, initial: { owned: you.owned, weapon: you.weapon } });
 weapons.syncAmmo(you.ammo, you.ammoAck);
 devPanel = createDevPanel({ hud, weapons, range: window.__mode === 'range' });
 grenades = await createGrenades({ worldRoot, loadTex });
@@ -429,7 +433,7 @@ setLoad(65, 'Loading players...');
 players = await createPlayers({ loadTex, worldRoot, world: playerWorld, bulletLimit: world.collision.length, gain, play, fog: worldFog, light: world.light, skyBrush: new Set(world.skyBrushIdx ?? []), fogGlsl: FOG_GLSL, getMyTeam: () => you.team, getMyId: () => net.id, mapName: MAP_NAME, snapshotRate: net.snapshotRate });
 players.applySnapshot(net.first, performance.now() / 1000);
 player.others = players.solids;
-buyMenu = createBuyMenu({ net, getState: () => you, canOpen: canPlay });
+buyMenu = createBuyMenu({ net, getState: () => you, canOpen: canPlay, isMobile: () => !!touch?.isEnabled() });
 teamMenu = createTeamMenu({ net, getState: () => you, getRoster: () => roster, drawPortrait: players.drawPortrait, mapName: MAP_NAME, onPick: () => { joined = true; startPlay(); } });
 await new Promise((done) => { // wait for textures (capped so a missing file can't hang the screen)
   const t0 = performance.now();
@@ -615,7 +619,7 @@ renderer.setAnimationLoop((now) => {
       w: (tm?.w || keys.has(binds.walk)) ? 1 : 0,
       yaw: player.yaw, pitch: player.pitch,
     };
-    if (roundState.phase === 'freeze' || !you.alive || weapons.state.planting || defuseHeld || you.act) { cmd.f = cmd.s = cmd.j = 0; } // freeze time / dead / planting / defusing: no moving (the server enforces it too)
+    if (uiOpen() || roundState.phase === 'freeze' || !you.alive || weapons.state.planting || defuseHeld || you.act) { cmd.f = cmd.s = cmd.j = 0; } // freeze time / dead / planting / defusing: no moving (the server enforces it too)
     if (!q.has('freeze') && net.connected) {
       player.tick(cmdInput(cmd));
       pending.push({ cmd, o: [...player.o] }); if (pending.length > 256) pending.shift();

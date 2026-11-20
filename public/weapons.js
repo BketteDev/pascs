@@ -58,7 +58,7 @@ const vmFragment = `
     gl_FragColor = vec4(t.rgb * l * 1.2, t.a);
   }`;
 
-export async function createWeapons({ loadTex, player, world, bulletLimit, surfOf, surfaces, worldRoot, hud, renderer, targets, net, uiOpen, initial, alive = () => true, canFire = () => !!document.pointerLockElement }) {
+export async function createWeapons({ loadTex, player, world, bulletLimit, surfOf, surfaces, worldRoot, hud, renderer, targets, net, uiOpen, initial, alive = () => true, canFire = () => !!document.pointerLockElement, repeatPrimary = () => false }) {
   // ---------- assets ----------
   const manifest = await fetch('weapons/weapons.json').then((r) => r.json());
   const ctx = { world, limit: bulletLimit, surfOf, surfaces };
@@ -690,7 +690,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     const d = def(), a = ammo[s.cur];
     if (d.grenade || d.c4) { s.wasHeld = s.held; return; }
     while (s.burstLeft > 0 && t >= s.burstNext) { if (a.mag <= 0) { s.burstLeft = 0; break; } s.burstLeft--; s.burstNext += d.burst.gap; fire(false, true); }
-    for (let n = 0; n < 3 && s.held && (d.auto || !s.wasHeld) && !s.reload && t >= s.nextFire; n++) { // semi-auto needs a fresh click
+    for (let n = 0; n < 3 && s.held && (d.auto || repeatPrimary() || !s.wasHeld) && !s.reload && t >= s.nextFire; n++) { // semi-auto needs a fresh click
       if (d.mag && a.mag <= 0) { if (!s.emptyClicked) { play(d.sounds.empty, 0.5); s.emptyClicked = true; } if (a.reserve > 0) startReload(); break; }
       s.emptyClicked = false; fire();
       s.wasHeld = true;

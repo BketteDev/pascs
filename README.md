@@ -29,7 +29,7 @@ npm test
    e.g. `/opt/notcssource/assets/{maps,sound,players,weapons,ui}`.
 2. Portainer: **Stacks > Add stack > Repository**, this repo, compose path `docker-compose.yml`.
 3. Environment variables: `ADMIN_PASSWORD` (required), and optionally `ASSETS_DIR` (default `/opt/notcssource/assets`), `MAP`
-   (default `de_dust2`), `TEAM_SIZE` (default 5), `PORT` (default 6767).
+   (default `Source-Dust2`), `TEAM_SIZE` (default 5), `PORT` (default 6767).
 4. Deploy, then open `http://<host>:6767`.
 
 The server gzips map data on first request (cached in `.gzcache`) and revalidates files by ETag, so loads after the first are quick.
@@ -133,3 +133,33 @@ node test-static.mjs
 Le sol artificiel de `test-physics.mjs` est limité à 8 192 unités de chaque côté pour éviter des millions de cellules de collision inutiles et une saturation mémoire sur téléphone. Les tests s’exécutent successivement. `test-gameplay.mjs` couvre les munitions, réserves, rechargements, armes ramassées, fréquences réseau et réservations de session avec une petite carte et une horloge déterministe. `test-net.mjs` vérifie la reconnexion du client, les confirmations d’actions et les dispositions clavier ; `test-weapons.mjs` exerce le vrai contrôleur d’armes sans GPU. `npm test` utilise aussi le véritable transport WebSocket ; le mode offline utilise un transport en mémoire.
 
 La disposition tactile et le rendu WebGL demandent encore une vérification visuelle dans le navigateur du téléphone.
+
+
+## Cartes classées par jeu
+
+Les dossiers, les listes Admin, le tableau des scores et le titre de la page utilisent désormais les mêmes noms :
+
+| Source | CS:GO |
+|---|---|
+| Source-Dust2 | GO-Agency |
+| Source-Inferno | GO-Bank |
+| Source-Nuke | GO-Italy |
+| Source-Office | GO-Lake |
+| | GO-Mirage |
+| | GO-Overpass |
+| | GO-ShortDust |
+| | GO-ShortNuke |
+
+Le registre partagé est `public/maps.js`. Les anciens identifiants (`de_dust2`, `de_mirage_csgo_new`, etc.) restent acceptés dans `MAP`, dans la configuration, dans l’API Admin et dans les URL des ressources. Les convertisseurs BSP/VMF écrivent dans les nouveaux dossiers sans changer les noms des fichiers source BSP/VMF. Aucune reconstruction des textures ou des géométries n’est nécessaire après cette mise à jour.
+
+## Téléphone et accessibilité
+
+Les nouveaux joueurs sur téléphone démarrent avec un rendu à 75 %, des textures allégées et des chiffres lisibles ; les préférences déjà enregistrées sont conservées. **Options → Touch → Réglages conseillés pour téléphone** applique ce profil aux joueurs existants (les textures changent après rechargement de la page).
+
+Le mode tactile simplifié affiche les actions principales et range scores, équipe, discussion, lâcher et inspecter dans **Plus**. Les pistolets peuvent tirer en continu en maintenant **Tirer**, à leur cadence normale. Le rechargement démarre automatiquement à vide. Ces deux aides et le mode simplifié sont désactivables dans les options. Le retour d’arrière-plan libère les touches et l’accroupissement.
+
+Sur téléphone, le magasin utilise de grandes cartes tactiles et affiche les prix, les achats indisponibles et un bouton **Équipement conseillé** qui détaille son coût et son contenu avant achat. La sélection d’équipe propose **Jouer · équipe automatique**.
+
+**Options → Accessibilité** propose textes/cibles agrandis, contraste renforcé, chiffres standards, réduction des transitions et des clignotements, et un flash sombre qui conserve la durée et l’opacité de l’aveuglement. La préférence système de réduction des mouvements est également respectée. Les menus et les commandes principales peuvent être activés au clavier, avec un indicateur de focus visible. Le bouton de reprise du chargement reprend le style VGUI olive du reste du jeu.
+
+`npm run test:ui` vérifie les interactions DOM mobiles sans navigateur ni GPU : achats, budget conseillé, commandes tactiles, reprise après arrière-plan, sélection d’équipe et noms des cartes. `linkedom` est uniquement une dépendance de développement ; l’image de production continue d’installer les dépendances avec `--omit=dev`. Les tests HTTP couvrent aussi les noms canoniques et la compatibilité des anciens noms.

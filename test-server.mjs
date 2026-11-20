@@ -9,7 +9,7 @@ import { freshAmmo } from './public/ammo.js';
 import { DEFAULT_BINDS } from './public/binds.js';
 import { EventEmitter } from 'node:events';
 
-const game = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), botsFight: false }); // the feature tests move players around: no stray bot bullets
+const game = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'Source-Dust2'), botsFight: false }); // the feature tests move players around: no stray bot bullets
 const http = createServer(); const wss = new WebSocketServer({ server: http, path: '/game' });
 wss.on('connection', (ws) => game.connect(ws));
 const inProcess = process.argv.includes('--in-process');
@@ -262,7 +262,7 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
 }
 // explosion: a short timer on a private game, nobody defuses -> T win, players near it die
 {
-  const g2 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), bombTimer: 1, botsFight: false });
+  const g2 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'Source-Dust2'), bombTimer: 1, botsFight: false });
   await sleep(5300); // freeze time
   const carrier = [...g2.ents.values()].find((e) => e.owned.has('c4')), site = g2.sites[0];
   for (const e of g2.ents.values()) if (e.team === 'ct') { e.p.o = [site.o[0], site.o[1], site.max[2] + 200]; }
@@ -279,7 +279,7 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
 // bots fight: a full bot game, someone gets shot dead by a bot within a minute and a half of play
 {
   { // hostage rescue (cs_office): 4 hostages, no bomb; hostages inside a rescue zone are rescued and the CTs win once all are out
-    const g5 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'cs_office'), teamSize: 2, botsFight: false });
+    const g5 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'Source-Office'), teamSize: 2, botsFight: false });
     await sleep(300);
     const hs = [...g5.ents.values()].filter((e) => e.hostage);
     assert(g5.hostageMode && hs.length === 4 && g5.bomb.state === 'none', 'office: hostage mode with 4 hostages and no bomb');
@@ -293,7 +293,7 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     g5.stop();
   }
   { // doors + breakable glass (de_lake): E opens the door in front of you, a shot through a pane breaks it, a new round restores both
-    const dir = path.join(import.meta.dirname, 'public', 'maps', 'de_lake'), { movers } = JSON.parse((await import('fs')).readFileSync(path.join(dir, 'world.json'), 'utf8'));
+    const dir = path.join(import.meta.dirname, 'public', 'maps', 'GO-Lake'), { movers } = JSON.parse((await import('fs')).readFileSync(path.join(dir, 'world.json'), 'utf8'));
     const g6 = createGame({ mapDir: dir, teamSize: 1, botsFight: false });
     const { trace } = await import('./public/physics.js');
     const fake = { readyState: 1, handlers: {}, last: null, events: [], on(k, f) { this.handlers[k] = f; }, ping() {}, send(m) { const d = JSON.parse(m); if (d.t === 'snap') { this.last = d; this.events.push(...d.ev); } } };
@@ -332,7 +332,7 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     g6.stop();
   }
   { // spectating: off both teams (bots fill them), never spawns, out of the player list; joining a team again works
-    const g7 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), teamSize: 2, botsFight: false });
+    const g7 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'Source-Dust2'), teamSize: 2, botsFight: false });
     const fake = { readyState: 1, handlers: {}, last: null, on(k, f) { this.handlers[k] = f; }, ping() {}, send(m) { const d = JSON.parse(m); if (d.t === 'snap') this.last = d; } };
     g7.connect(fake); fake.handlers.message(JSON.stringify({ t: 'join', name: 'Watcher', team: 'ct' }));
     fake.handlers.message(JSON.stringify({ t: 'team', team: 'spec' }));
@@ -434,7 +434,7 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     console.log('killfeed modifiers ok:', JSON.stringify({ hs: death.hs, smk: death.smk, blind: death.blind, ns: death.ns, air: death.air, as: death.as, fa: death.fa, dom: death.dom, rev: death.rev }));
   }
   { // shooting range: target bots in view of the shooters, no bomb, the dead come back
-    const g4 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2'), range: true, teamSize: 4 });
+    const g4 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'Source-Dust2'), range: true, teamSize: 4 });
     await sleep(400);
     const targets = [...g4.ents.values()];
     assert(targets.length === 4 && targets.every((e) => e.team === 't' && e.bot), 'range: 4 target bots, no teammates');
@@ -445,7 +445,7 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     console.log('range ok: targets at', targets.map((e) => e.p.o.map(Math.round).join(',')).join(' | '));
     g4.stop();
   }
-  const g3 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'de_dust2') });
+  const g3 = createGame({ mapDir: path.join(import.meta.dirname, 'public', 'maps', 'Source-Dust2') });
   let botKill = false;
   for (let i = 0; i < 95 && !botKill; i++) { await sleep(1000); botKill = [...g3.ents.values()].some((e) => !e.alive) && g3.round.phase !== 'freeze'; }
   assert(botKill, 'bots shot each other');

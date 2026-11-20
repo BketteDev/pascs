@@ -1,3 +1,4 @@
+import { deviceDefaults, isTouchDevice } from './mobile.js';
 // The CS:S main menu: logo top left, a column of text buttons over the live game (the map behind it, the spectator camera running),
 // and the Options window in CS:S's olive VGUI style (tabs, sliders, OK / Cancel / Apply). One server only: JOIN GAME joins it.
 // Settings live in localStorage ('settings', plus 'crosshair', 'playerName', 'binds', 'adminPass') and are handed to onSettings.
@@ -6,11 +7,11 @@ import { ACTIONS, binds, setBinds, keyName, KEYBOARD_PRESETS, setKeyboardLayout,
 import { WEAPONS } from './weapon-defs.js';
 import { loadCosmetics, equippedCosmetic, equipCosmetic } from './cosmetics.js';
 import { GLYPH } from './hud.js';
-export const DEFAULTS = { sens: 2.5, invert: false, master: 1, ambience: 1, brightness: 1, showFps: false, renderScale: 1, texLow: false, touchMode: 'auto', touchSens: 1.0, touchLeftFire: true, touchScale: 1 };
+export const DEFAULTS = { sens: 2.5, invert: false, master: 1, ambience: 1, brightness: 1, showFps: false, renderScale: 1, texLow: false, touchMode: 'auto', touchSens: 1.0, touchLeftFire: true, touchScale: 1, touchSimple: true, touchAutoReload: true, touchRepeatFire: true, highContrast: false, reduceMotion: false, darkFlash: false, legibleHud: false, uiScale: 1 };
 const XH_DEFAULT = { color: '#32fa32', alpha: 1, length: 6, thickness: 2, gap: 3, outline: 0, dot: false, dynamic: true };
 const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === 'object' ? { ...d, ...v } : { ...d }; } catch { return { ...d }; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked: this session only */ } };
-export const loadSettings = () => load('settings', DEFAULTS);
+export const loadSettings = () => load('settings', deviceDefaults(DEFAULTS));
 export const loadCrosshair = () => load('crosshair', XH_DEFAULT);
 // admin: the password (Options > Multiplayer) is checked by the server; while it is valid the main menu shows ADMIN
 const loadAdminPass = () => { try { return localStorage.getItem('adminPass') ?? ''; } catch { return ''; } };
@@ -26,7 +27,7 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouch
   if (loadAdminPass()) adminPost({ password: loadAdminPass() }).then((r) => { adminOk = !!r.ok; if (shown) renderItems(); }); // still valid on this server?
   function renderItems() {
     const list = [[inGame() ? 'Resume Game' : 'Join Game', 'play'], ['Inventory', 'inventory'], ['Options', 'options'], ['Guide / How to play', 'guide'], ...(adminOk ? [['Admin', 'admin']] : []), ['Quit', 'quit']];
-    items.innerHTML = list.map(([t, a]) => `<div class="mm-item" data-a="${a}">${t}</div>`).join('');
+    items.innerHTML = list.map(([t, a]) => `<button type="button" class="mm-item" data-a="${a}">${t}</button>`).join('');
   }
   items.addEventListener('click', (e) => {
     const a = e.target.closest('[data-a]')?.dataset.a;
@@ -40,8 +41,9 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouch
 
   // ---- windows (CS:S VGUI look) ----
   const frame = (title, body, buttons) => {
-    win.hidden = false;
-    win.innerHTML = `<div class="vg-title">${title}<i data-b="cancel">&#10005;</i></div><div class="vg-body">${body}</div><div class="vg-buttons">${buttons.map(([t, b]) => `<button data-b="${b}">${t}</button>`).join('')}</div>`;
+    win.hidden = false; win.setAttribute('role', 'dialog'); win.setAttribute('aria-label', title);
+    win.innerHTML = `<div class="vg-title">${title}<button type="button" class="vg-close" data-b="cancel" aria-label="Fermer">&#10005;</button></div><div class="vg-body">${body}</div><div class="vg-buttons">${buttons.map(([t, b]) => `<button data-b="${b}">${t}</button>`).join('')}</div>`;
+    win.querySelector('[data-b="cancel"]')?.focus();
   };
   const closeWin = () => { capture = null; setKeyboardLayout(keyboardLayout()); win.hidden = true; win.innerHTML = ''; win.onclick = null; };
   async function inventoryWindow() {
@@ -110,8 +112,8 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouch
       <p>Choisis ton équipe. Achète ton équipement au début de la manche, puis joue l’objectif : poser/désamorcer la bombe ou sauver les otages.</p>
       <p>Clavier : ${key('forward')} ${key('left')} ${key('back')} ${key('right')} pour bouger, ${key('jump')} pour sauter, ${key('duck')} pour s’accroupir, ${key('walk')} pour marcher sans bruit.</p>
       <p>${key('buy')} : acheter · ${key('reload')} : recharger · ${key('use')} : utiliser/désamorcer · ${key('scores')} : scores. Souris gauche : tirer ; droite : zoom/action secondaire. 1–5 : armes et grenades.</p>
-      <p>Mobile : joue en paysage. Pouce gauche pour bouger (petits mouvements = marche), glisse à droite pour viser. Garde FIRE appuyé en glissant pour viser et tirer. USE sert aussi à désamorcer.</p>
-      <p>Options → Keyboard : AZERTY/QWERTY et touches personnalisées. Options → Touch : sensibilité, taille et disposition des boutons.</p>
+      <p>Mobile : le mode simplifié garde les actions essentielles ; les autres sont dans « Plus ». Le magasin affiche de grandes cartes faciles à toucher et peut proposer un équipement conseillé. Maintenir Tirer répète les tirs des pistolets, à leur cadence normale.  joue en paysage. Pouce gauche pour bouger (petits mouvements = marche), glisse à droite pour viser. Garde FIRE appuyé en glissant pour viser et tirer. USE sert aussi à désamorcer.</p>
+      <p>Options → Accessibilité : contraste, grands textes, réduction des clignotements et flash sombre. Options → Keyboard : AZERTY/QWERTY et touches personnalisées. Options → Touch : sensibilité, taille et disposition des boutons.</p>
       <p>Après une coupure, la reconnexion est automatique. Ta place est réservée 30 secondes ; ton personnage reste vulnérable pendant l’absence.</p>
     </div>`, [[startAfter ? 'Jouer / Play' : 'Close', 'done']]);
     win.onclick = (e) => {
@@ -142,7 +144,7 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouch
   function optionsWindow() {
     const s = loadSettings(), draft = { ...s, name: loadName(), adminPass: loadAdminPass(), binds: { ...binds }, xh: loadCrosshair() };
     const pct = (v) => Math.round(v * 100) + '%', px = (v) => v + ' px';
-    const FMT = { sens: (v) => Number(v).toFixed(2), touchSens: (v) => Number(v).toFixed(2), touchScale: pct, master: pct, ambience: pct, brightness: pct, renderScale: pct, 'xh.alpha': pct, 'xh.length': px, 'xh.thickness': px, 'xh.gap': px, 'xh.outline': px };
+    const FMT = { sens: (v) => Number(v).toFixed(2), touchSens: (v) => Number(v).toFixed(2), touchScale: pct, uiScale: pct, master: pct, ambience: pct, brightness: pct, renderScale: pct, 'xh.alpha': pct, 'xh.length': px, 'xh.thickness': px, 'xh.gap': px, 'xh.outline': px };
     const val = (k) => (k.startsWith('xh.') ? draft.xh[k.slice(3)] : draft[k]);
     const slider = (k, label, min, max, step) => `<label class="vg-row">${label}<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${val(k)}"><output>${FMT[k](val(k))}</output></label>`;
     const check = (k, label) => `<label class="vg-row vg-check"><input type="checkbox" data-k="${k}" ${val(k) ? 'checked' : ''}>${label}</label>`;
@@ -155,18 +157,19 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouch
         '<div class="vg-row vg-note">Click an action, then press its new key (Esc cancels). Weapons: 1-6. <button data-b="keydefaults">Use defaults</button></div>',
       Mouse: () => slider('sens', 'Mouse sensitivity', 0.2, 10, 0.05) + check('invert', 'Reverse mouse'),
       Touch: () => select('touchMode', 'Touch controls', [['auto', 'Auto (mobile)'], ['on', 'Always on'], ['off', 'Off']]) +
-        slider('touchSens', 'Touch look speed', 0.3, 3.0, 0.05) + check('touchLeftFire', 'Extra fire button on left side') + slider('touchScale', 'Button size', 0.75, 1.4, 0.05) + '<button data-b="touchlayout">Déplacer les boutons / Edit layout</button>',
+        slider('touchSens', 'Touch look speed', 0.3, 3.0, 0.05) + check('touchLeftFire', 'Extra fire button on left side') + slider('touchScale', 'Button size', 0.75, 1.4, 0.05) + check('touchSimple', 'Commandes simplifiées (conseillé)') + check('touchAutoReload', 'Recharger automatiquement à vide') + check('touchRepeatFire', 'Maintenir Tirer pour les pistolets') + '<button data-b="mobilepreset">Réglages conseillés pour téléphone</button><button data-b="touchlayout">Déplacer les boutons / Edit layout</button>',
       Crosshair: () => `<div class="vg-xh"><div>${`<label class="vg-row">Color<input type="color" data-k="xh.color" value="${draft.xh.color}"><span></span></label>`}${slider('xh.alpha', 'Opacity', 0.1, 1, 0.01)}${slider('xh.length', 'Length', 1, 20, 1)}${slider('xh.thickness', 'Thickness', 1, 6, 1)}${slider('xh.gap', 'Gap', 0, 15, 1)}${slider('xh.outline', 'Outline', 0, 2, 1)}` +
         `${check('xh.dot', 'Center dot')}${check('xh.dynamic', 'Dynamic (opens with movement and firing)')}</div><div class="vg-previewbox">${preview()}</div></div>`,
       Audio: () => slider('master', 'Game volume', 0, 1, 0.01) + slider('ambience', 'Ambient sound volume', 0, 1, 0.01),
       Video: () => slider('brightness', 'Brightness', 0.6, 1.6, 0.01) + slider('renderScale', 'Render scale (lower = faster)', 0.5, 1, 0.05) +
         check('texLow', 'Low texture quality (less video memory; after a reload)') + check('showFps', 'Show frame rate and position'),
+      Accessibilité: () => slider('uiScale', 'Taille des textes et cibles', 1, 1.4, 0.1) + check('legibleHud', 'Chiffres faciles à lire') + check('highContrast', 'Contraste renforcé') + check('reduceMotion', 'Réduire clignotements et transitions') + check('darkFlash', 'Flash sombre (même durée d’aveuglement)'),
       Multiplayer: () => `<label class="vg-row">Player name<input class="vg-text" data-k="name" maxlength="24" value="${esc(draft.name)}"><span></span></label>` +
         `<label class="vg-row">Admin password<input class="vg-text" type="password" data-k="adminPass" autocomplete="current-password" value="${esc(draft.adminPass)}"><output class="vg-admin">${adminOk ? 'OK' : ''}</output></label>`,
     };
-    let tab = 'Keyboard';
+    let tab = isTouchDevice() ? 'Touch' : 'Keyboard';
     const draw = () => {
-      frame('Options', `<div class="vg-tabs">${Object.keys(TABS).map((t) => `<span class="${t === tab ? 'on' : ''}" data-t="${t}">${t}</span>`).join('')}</div><div class="vg-page">${TABS[tab]()}</div>`, [['OK', 'ok'], ['Cancel', 'cancel'], ['Apply', 'apply']]);
+      frame('Options', `<div class="vg-tabs" role="tablist">${Object.keys(TABS).map((t) => `<button type="button" role="tab" aria-selected="${t === tab}" class="${t === tab ? 'on' : ''}" data-t="${t}">${t}</button>`).join('')}</div><div class="vg-page">${TABS[tab]()}</div>`, [['OK', 'ok'], ['Cancel', 'cancel'], ['Apply', 'apply']]);
       const page = win.querySelector('.vg-page');
       page.oninput = page.onchange = (e) => {
         const k = e.target.dataset.k; if (!k) return;
@@ -193,10 +196,11 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouch
     };
     draw();
     win.onclick = (e) => {
-      if (e.target.dataset.t) { tab = e.target.dataset.t; capture = null; draw(); return; }
+      if (e.target.dataset.t) { tab = e.target.dataset.t; capture = null; draw(); win.querySelector('.vg-tabs .on')?.focus(); return; }
       if (e.target.dataset.bind) { capture = { action: e.target.dataset.bind, draft, redraw: draw }; draw(); return; }
       const b = e.target.dataset.b;
-      if (b === 'touchlayout') { apply(); closeWin(); onTouchLayout?.(); }
+      if (b === 'mobilepreset') { Object.assign(draft, { renderScale: 0.75, texLow: true, touchMode: 'auto', touchSimple: true, touchAutoReload: true, touchRepeatFire: true, touchSens: 0.8, touchScale: 1.05, legibleHud: true }); draw(); }
+      else if (b === 'touchlayout') { apply(); closeWin(); onTouchLayout?.(); }
       else if (b === 'azerty' || b === 'qwerty') {
         draft.binds = { ...KEYBOARD_PRESETS[b] }; draft.keyboardLayout = b; setKeyboardLayout(b); draw();
       }

@@ -6,5 +6,5 @@ node_modules/
 *.log
 
 # Large geometry stays raw locally and ships as world.bin.gz on GitHub.
-public/maps/cs_agency/world.bin
-public/maps/de_mirage_csgo_new/world.bin
+public/maps/GO-Agency/world.bin
+public/maps/GO-Mirage/world.bin

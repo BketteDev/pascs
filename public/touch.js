@@ -3,9 +3,7 @@
 // top utility bar (Menu / Scores / Team / Buy), and spectator controls.
 import { WEAPONS, GRENADES } from './weapon-defs.js';
 
-const IS_TOUCH_DEVICE = () => (typeof window !== 'undefined') && (
-  window.matchMedia?.('(pointer: coarse)').matches || ((navigator.maxTouchPoints ?? 0) > 0 && !window.matchMedia?.('(pointer: fine)').matches)
-);
+import { isTouchDevice } from './mobile.js';
 
 const SHORT_NAME = {
   glock: 'Glock', usp: 'USP', p228: 'P228', deagle: 'Deagle', elite: 'Elites', fiveseven: '5-7',
@@ -23,35 +21,43 @@ export function createTouchControls({
   root.id = 'touch-ui';
   root.innerHTML = `
     <div id="touch-top">
-      <button type="button" class="t-pill" data-act="menu">Menu</button>
-      <button type="button" class="t-pill" data-act="scores">Tab</button>
-      <button type="button" class="t-pill" data-act="team">Team</button>
+      <button type="button" class="t-pill" data-act="menu">Pause</button>
+      <button type="button" class="t-pill" data-act="scores">Scores</button>
+      <button type="button" class="t-pill" data-act="team">Équipe</button>
       <button type="button" class="t-pill" data-act="chat">Chat</button>
-      <button type="button" class="t-pill t-buy" data-act="buy">$ Buy</button>
+      <button type="button" class="t-pill t-buy" data-act="buy">Acheter</button>
+      <button type="button" class="t-pill" data-act="more" aria-expanded="false" aria-controls="touch-more">Plus</button>
+    </div>
+    <div id="touch-more" hidden>
+      <button type="button" data-extra="scores">Scores</button><button type="button" data-extra="team">Équipe</button>
+      <button type="button" data-extra="chat">Discussion</button><button type="button" data-extra="drop">Lâcher l’arme</button>
+      <button type="button" data-extra="inspect">Inspecter</button><button type="button" data-extra="close">Fermer</button>
     </div>
     <div id="touch-move-zone">
       <div id="touch-joy"><div id="touch-knob"></div></div>
     </div>
     <div id="touch-look-zone"></div>
-    <button type="button" id="touch-fire-l" class="t-btn t-fire" aria-label="Fire">FIRE</button>
+    <button type="button" id="touch-fire-l" class="t-btn t-fire" aria-label="Tirer">TIRER</button>
     <div id="touch-actions">
-      <button type="button" id="touch-use" class="t-btn t-sm">USE</button>
-      <button type="button" id="touch-drop" class="t-btn t-sm">DROP</button>
+      <button type="button" id="touch-use" class="t-btn t-sm">UTILISER</button>
+      <button type="button" id="touch-drop" class="t-btn t-sm">LÂCHER</button>
       <button type="button" id="touch-inspect" class="t-btn t-sm" aria-label="Inspect weapon">LOOK</button>
       <button type="button" id="touch-alt" class="t-btn t-sm">ALT</button>
-      <button type="button" id="touch-reload" class="t-btn t-sm">RELOAD</button>
-      <button type="button" id="touch-duck" class="t-btn t-sm">CROUCH</button>
-      <button type="button" id="touch-jump" class="t-btn t-sm">JUMP</button>
-      <button type="button" id="touch-fire-r" class="t-btn t-fire">FIRE</button>
+      <button type="button" id="touch-reload" class="t-btn t-sm">RECHARGER</button>
+      <button type="button" id="touch-duck" class="t-btn t-sm">ACCROUPI</button>
+      <button type="button" id="touch-jump" class="t-btn t-sm">SAUTER</button>
+      <button type="button" id="touch-fire-r" class="t-btn t-fire">TIRER</button>
     </div>
     <div id="touch-weapons"></div>
     <div id="touch-spec">
-      <button type="button" class="t-pill" data-spec="view">1st / 3rd</button>
-      <button type="button" class="t-pill" data-spec="next">Next Player</button>
+      <button type="button" class="t-pill" data-spec="view">Changer de vue</button>
+      <button type="button" class="t-pill" data-spec="next">Joueur suivant</button>
     </div>
   `;
   document.body.append(root);
 
+  const moreEl = root.querySelector('#touch-more'), moreBtn = root.querySelector('[data-act="more"]');
+  const closeMore = () => { moreEl.hidden = true; moreBtn.setAttribute('aria-expanded', 'false'); };
   const moveZone = root.querySelector('#touch-move-zone');
   const lookZone = root.querySelector('#touch-look-zone');
   const joyEl = root.querySelector('#touch-joy');
@@ -86,9 +92,9 @@ export function createTouchControls({
     const m = getSettings().touchMode ?? 'auto';
     if (m === 'on') return true;
     if (m === 'off') return false;
-    return IS_TOUCH_DEVICE() || touchedRecently;
+    return isTouchDevice() || touchedRecently;
   };
-  const isActive = () => isEnabled() && isJoined() && !uiOpen();
+  const isActive = () => isEnabled() && isJoined() && !uiOpen() && moreEl.hidden;
 
   // Detect any touch automatically when touchMode === 'auto'.
   addEventListener('touchstart', () => {
@@ -111,6 +117,7 @@ export function createTouchControls({
       onUseStop();
     }
     jumpPulse = false;
+    duckToggle = false; duckBtn.setAttribute('aria-pressed', 'false');
     joyEl.classList.remove('active');
     joyEl.style.left = ''; joyEl.style.top = '';
     knobEl.style.transform = 'translate(0px, 0px)';
@@ -310,6 +317,7 @@ export function createTouchControls({
   // ---------- single-tap / hold action buttons ----------
   const stopBtn = (el, onStart, onEnd) => {
     el.addEventListener('touchstart', (e) => {
+      if (!isActive() || el.disabled) return;
       e.preventDefault(); e.stopPropagation();
       onWakeAudio?.();
       el.classList.add('active');
@@ -372,6 +380,17 @@ export function createTouchControls({
     if (btn) weapons.select(btn.dataset.wep);
   });
 
+  tap(moreBtn, () => { const opening = moreEl.hidden; resetInputs(); moreEl.hidden = !opening; moreBtn.setAttribute('aria-expanded', String(opening)); });
+  tap(moreEl, (e) => {
+    const action = e.target.closest('[data-extra]')?.dataset.extra; if (!action) return;
+    closeMore(); resetInputs();
+    if (action === 'scores') { scoresOpen = !scoresOpen; onScoresToggle(scoresOpen); }
+    else if (action === 'team') onTeam(); else if (action === 'chat') onChat?.();
+    else if (action === 'drop') weapons.drop(); else if (action === 'inspect') weapons.inspect();
+  });
+  addEventListener('blur', () => { resetInputs(); closeMore(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { resetInputs(); closeMore(); } });
+
   // ---------- per-frame UI sync ----------
   let lastWepSig = '';
   let lastAlt = null;
@@ -389,18 +408,22 @@ export function createTouchControls({
     }
 
     applyLayout();
-    const active = isActive();
+    const simple = getSettings().touchSimple !== false;
+    root.classList.toggle('simple-controls', simple);
+    moreBtn.hidden = !simple;
+    if (!simple) closeMore();
+    const active = isEnabled() && isJoined() && !uiOpen();
     if (!active && lastWasUi !== true) resetInputs();
     lastWasUi = !active;
     root.style.display = active ? 'block' : 'none';
-    if (!active) return;
+    if (!active) { closeMore(); return; }
 
     const you = getYou();
     const alive = !!you.alive;
     if (lastAlive && !alive) duckToggle = false;
     lastAlive = alive;
 
-    const showLeftFire = !!(getSettings().touchLeftFire ?? true);
+    const showLeftFire = !simple && !!(getSettings().touchLeftFire ?? true);
     moveZone.style.display = alive ? 'block' : 'none';
     actionsEl.style.display = alive ? 'flex' : 'none';
     fireL.style.display = alive && showLeftFire ? 'flex' : 'none';
@@ -425,18 +448,20 @@ export function createTouchControls({
 
     const canRel = weapons.canReload();
     reloadBtn.style.display = def?.mag ? 'flex' : 'none';
-    reloadBtn.classList.toggle('dim', !canRel);
+    reloadBtn.classList.toggle('dim', !canRel); reloadBtn.disabled = !canRel;
+    if (getSettings().touchAutoReload !== false && moreEl.hidden && def?.mag && weapons.ammo[cur]?.mag === 0 && canRel && getRound().phase === 'live') weapons.reload();
 
     const canDrop = cur === 'c4' || def?.slot === 1 || def?.slot === 2;
-    dropBtn.style.display = canDrop ? 'flex' : 'none';
-    inspectBtn.style.display = def?.mag || def?.melee ? 'flex' : 'none';
+    dropBtn.style.display = !simple && canDrop ? 'flex' : 'none';
+    inspectBtn.style.display = !simple && (def?.mag || def?.melee) ? 'flex' : 'none';
 
     const defuseReady = nearBomb();
-    useBtn.textContent = defuseReady ? 'DEFUSE' : 'USE';
+    useBtn.textContent = defuseReady ? 'DÉSAMORCER' : 'UTILISER';
+    useBtn.setAttribute('aria-label', defuseReady ? 'Maintenir pour désamorcer' : 'Maintenir pour utiliser');
     useBtn.classList.toggle('hot', defuseReady);
 
-    duckBtn.classList.toggle('active', duckToggle);
-    fireR.textContent = def?.c4 ? 'PLANT' : def?.grenade ? 'THROW' : 'FIRE';
+    duckBtn.classList.toggle('active', duckToggle); duckBtn.setAttribute('aria-pressed', String(duckToggle));
+    fireR.textContent = def?.c4 ? 'POSER' : def?.grenade ? 'LANCER' : 'TIRER';
     fireL.textContent = fireR.textContent;
 
     const phase = getRound().phase;
@@ -466,7 +491,7 @@ export function createTouchControls({
     isActive,
     isEditing: () => !!editor,
     editLayout,
-    getMove: () => ({ f: joy.f, s: joy.s, j: jumpPulse ? 1 : 0, d: duckToggle ? 1 : 0, w: joy.w }),
+    getMove: () => !isActive() ? { f: 0, s: 0, j: 0, d: 0, w: 0 } : ({ f: joy.f, s: joy.s, j: jumpPulse ? 1 : 0, d: duckToggle ? 1 : 0, w: joy.w }),
     reset: resetInputs,
     update,
   };

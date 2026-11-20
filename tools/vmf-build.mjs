@@ -1,3 +1,4 @@
+import { mapDetails, mapFolder } from '../public/maps.js';
 // Builds a web map (public/maps/<name>/) from a decompiled Source map (.vmf), e.g. the CS:GO maps in reference/decompiled-csgo-maps.
 // Usage: node tools/vmf-build.mjs <map.vmf> <name> [--bsp map.bsp] [--mode wingman]
 // A VMF has no compiled lighting and CS:GO textures are mostly absent from the CS:S content, so this build: bakes simple face-direction
@@ -18,7 +19,8 @@ import { loadOrBuildNav } from '../server/nav.mjs';
 import { promoteMapWindows } from './promote-windows.mjs';
 import { vmfLadders } from './ladder-data.mjs';
 
-const [vmfFile, MAP, ...args] = process.argv.slice(2);
+const [vmfFile, mapInput, ...args] = process.argv.slice(2);
+const MAP = mapDetails(mapInput)?.id;
 if (!vmfFile || !/^[a-z0-9_]+$/.test(MAP ?? '')) { console.log('usage: node tools/vmf-build.mjs <map.vmf> <name> [--bsp map.bsp] [--mode wingman]'); process.exit(1); }
 const bspIndex = args.indexOf('--bsp');
 const bsp = bspIndex >= 0 ? args[bspIndex + 1] : [
@@ -30,7 +32,7 @@ if (bspIndex >= 0 && (!bsp || !fs.existsSync(bsp))) throw new Error('--bsp requi
 if (bsp) console.log(`${MAP}: ${addBspPak(bsp)} embedded assets from ${bsp}`);
 const mode = process.argv.includes('--mode') ? process.argv[process.argv.indexOf('--mode') + 1] : null;
 const ROOT = path.resolve(import.meta.dirname, '..', '..', 'content', 'css_content', 'materials');
-const OUT = path.resolve(import.meta.dirname, '..', 'public', 'maps', MAP);
+const OUT = path.resolve(import.meta.dirname, '..', 'public', 'maps', mapFolder(MAP));
 fs.mkdirSync(path.join(OUT, 'tex'), { recursive: true }); fs.mkdirSync(path.join(OUT, 'sky'), { recursive: true });
 const SURFACES = ['concrete', 'sand', 'tile', 'wood', 'metal', 'gravel', 'grass', 'glass']; // same table as build.mjs
 const tree = parseVmf(fs.readFileSync(vmfFile, 'latin1'));

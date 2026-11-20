@@ -6,6 +6,7 @@ import os from 'os';
 import crypto from 'crypto';
 import zlib from 'zlib';
 import { WebSocketServer } from 'ws';
+import { mapDetails, mapFolder } from './public/maps.js';
 import { createGame } from './server/game.mjs';
 
 const pub = path.join(import.meta.dirname, 'public');
@@ -41,6 +42,10 @@ const server = http.createServer((req, res) => {
     const name = url.slice(clientPrefix.length);
     if (clientFiles.has(name)) return serve(req, res, path.join(pub, name));
     return res.writeHead(404).end('not found');
+  }
+  if (url.startsWith('/maps/')) {
+    const parts = url.slice(6).split('/'), canonical = mapFolder(parts[0]);
+    if (canonical && canonical !== parts[0] && parts.slice(1).every((part) => part !== '..' && !part.includes('\\'))) return serve(req, res, path.join(pub, 'maps', canonical, ...parts.slice(1)));
   }
   const [dir, rel] = url.startsWith('/vendor/') ? [vendor, url.slice(8)] : [pub, url];
   const file = path.join(dir, rel);
@@ -84,7 +89,7 @@ function serve(req, res, file, packed = false) {
 }
 // One game per server run, set in server.config.json: { port, map, teamSize } (teamSize = players per team, bots fill empty slots; null = the map's default)
 const configFile = path.join(import.meta.dirname, 'server.config.json'); // optional: Docker passes the same settings as environment variables
-const config = { port: 6767, map: 'de_dust2', teamSize: null, ...(fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {}) };
+const config = { port: 6767, map: 'Source-Dust2', teamSize: null, ...(fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {}) };
 if (process.env.PORT) config.port = Number(process.env.PORT); // environment overrides, e.g. PORT=7000 MAP=de_inferno TEAM_SIZE=1 npm start
 if (process.env.MAP) config.map = process.env.MAP;
 if (process.env.TEAM_SIZE) config.teamSize = Number(process.env.TEAM_SIZE);
@@ -92,8 +97,8 @@ if (process.env.ADMIN_PASSWORD) config.adminPassword = process.env.ADMIN_PASSWOR
 if (process.env.BOT_DIFFICULTY) config.botDifficulty = process.env.BOT_DIFFICULTY;
 if (process.env.SNAPSHOT_RATE) config.snapshotRate = Number(process.env.SNAPSHOT_RATE);
 if (process.env.MODE) config.mode = process.env.MODE; // 'range': shooting range (target bots, no rounds)
-const CSS_MAPS = new Set(['de_dust2', 'de_inferno', 'cs_office', 'de_nuke']);
-const mapGame = (m) => CSS_MAPS.has(m) ? 'css' : 'csgo';
+const mapGame = (m) => mapDetails(m)?.game ?? 'csgo';
+config.map = mapFolder(config.map);
 const builtMaps = () => fs.readdirSync(path.join(pub, 'maps')).filter((m) => fs.existsSync(path.join(pub, 'maps', m, 'world.json')));
 if (!builtMaps().includes(config.map)) { console.error(`map "${config.map}" is not built: public/maps/${config.map}/world.json is missing (npm run build)`); process.exit(1); }
 const wss = new WebSocketServer({ server, path: '/game', maxPayload: 16384 });
@@ -121,6 +126,7 @@ function admin(req, res) {
     if (m.kick !== undefined) return game.kick(Number(m.kick)) ? reply(200, 'kicked') : reply(404, 'no such player');
     if (m.map === undefined) return reply(200, 'ok'); // login check only
     const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+    m.map = mapFolder(m.map);
     if (!builtMaps().includes(m.map)) return reply(400, 'unknown map');
     if (!int(m.teamSize, 1, 16)) return reply(400, 'team size must be 1-16');
     if (!int(m.maxPlayers, 1, 32)) return reply(400, 'max players must be 1-32');
