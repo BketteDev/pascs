@@ -287,9 +287,9 @@ function standIn(name) {
   const isWater = /(?:^|\/)liquids\/|\bwater\b|water_/.test(clean);
   const isGlass = /(?:^|\/)glass\/|glasswindow/.test(clean) && !/panel|frame/.test(clean);
   const isBlendDecal = isOverlay || /edgewear|puddle|stain/.test(clean);
-  const hasTransparency = isGlass || isBlendDecal || SEE_THROUGH.test(clean) || cs2?.trans;
+  const hasTransparency = isWater || isGlass || isBlendDecal || SEE_THROUGH.test(clean) || cs2?.trans;
   if (cs2 && (!isGlass || cs2.alpha > 0.02) && (hasTransparency || cs2.alpha < 0.995)) {
-    const alpha = cs2.alpha > 0.02 ? ((isGlass || isBlendDecal) ? 'BLEND' : (SEE_THROUGH.test(clean) || cs2.trans) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
+    const alpha = cs2.alpha > 0.02 ? ((isWater || isGlass || isBlendDecal) ? 'BLEND' : (SEE_THROUGH.test(clean) || cs2.trans) ? 'MASK' : 'OPAQUE') : 'OPAQUE';
     return { png: cs2.png, w: cs2.w, h: cs2.h, alpha, stand: true, real: true };
   }
   const base = clean.replace(/^maps\/[^/]+\//, '');

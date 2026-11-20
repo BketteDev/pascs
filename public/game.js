@@ -19,9 +19,10 @@ import { createMovers } from './movers.js';
 import { createAmbience } from './ambience.js';
 import { createTouchControls } from './touch.js';
 import { createChat } from './chat.js';
+import { faceSourceCamera as face, syncSkyCamera } from './scene-view.js';
 
 const q = new URLSearchParams(location.search);
-const MAP_NAME = mapFolder(window.__map) ?? 'Source-Dust2'; // the server's map (server.config.json): public/maps/<name>/; also picks the map's agents (agents.js)
+const MAP_NAME = mapFolder(window.__map) ?? 'Source-Inferno'; // the server's map (server.config.json): public/maps/<name>/; also picks the map's agents (agents.js)
 document.title = 'CS:S Web - ' + MAP_NAME;
 // loading screen: staged progress, hidden once every texture has reached the GPU
 const loadingEl = document.getElementById('loading');
@@ -604,7 +605,6 @@ function deathCam(t, dt) {
   deathEl.textContent = text; deathEl.style.display = 'block';
   return [cam, d.map((v) => v / l), player.yaw, player.pitch, false];
 }
-const face = (cam, x, y, z, f) => { cam.position.set(x, z, -y); cam.lookAt(x + f[0], z + f[2], -(y + f[1])); }; // Source (z-up) -> three (y-up)
 renderer.compile(scene, camera);
 renderer.setAnimationLoop((now) => {
   const dt = Math.min((now - last) / 1000, 0.1); acc += dt; last = now;
@@ -657,9 +657,7 @@ renderer.setAnimationLoop((now) => {
   setListener(dead ? e : player.eye, lyaw, lpitch);
   face(camera, e[0], e[1], e[2], f);
   renderer.clear();
-  if (sky) { // sky camera = sky_camera origin + eye / scale
-    face(skyCamera, sky.origin[0] + e[0] / sky.scale, sky.origin[1] + e[1] / sky.scale, sky.origin[2] + e[2] / sky.scale, f);
-  }
+  syncSkyCamera(skyCamera, camera, sky, e);
   renderer.render(skyScene, skyCamera);
   renderer.clearDepth();
   if (!q.has('skyonly')) renderer.render(scene, camera); // ?skyonly: debug the 3D skybox

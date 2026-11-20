@@ -139,7 +139,7 @@ function emitDisplacement(b, poly, side, uvAxes) {
   const P = [];
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     const flat = lerp(lerp(c[0], c[1], y / (N - 1)), lerp(c[3], c[2], y / (N - 1)), x / (N - 1));
-    let p = flat;
+    let p = add(flat, mul(side.n, Number(disp.props.get('elevation') ?? 0)));
     if (normals && dist) p = add(p, mul(normals[y][x], dist[y][x][0]));
     if (offs) p = add(p, offs[y][x]);
     P.push({ p, flat });
@@ -147,7 +147,15 @@ function emitDisplacement(b, poly, side, uvAxes) {
   const face = (i, j, k) => { // CCW relative to the plane normal
     const a = P[i].flat, bb = P[j].flat, cc = P[k].flat, n = cross(sub(bb, a), sub(cc, a));
     const tri = dot(n, side.n) >= 0 ? [i, j, k] : [i, k, j];
-    emitTri(b, tri.map((q) => P[q].p), uvAxes); // uv from displaced position is fine for untextured/stretched use
+    const before = b.uv.length;
+    emitTri(b, tri.map((q) => P[q].p), uvAxes);
+    if (b.uv.length > before && uvAxes) {
+      b.uv.length = before;
+      for (const q of tri) {
+        const [ua, va] = uvAxes, p = P[q].flat;
+        b.uv.push((dot(p, ua.slice(0, 3)) / ua[4] + ua[3]) / b.texW, (dot(p, va.slice(0, 3)) / va[4] + va[3]) / b.texH);
+      }
+    }
   };
   for (let y = 0; y < N - 1; y++) for (let x = 0; x < N - 1; x++) { const a = y * N + x, bb = a + 1, d = a + N, e = d + 1; face(a, bb, e); face(a, e, d); }
   return true;
@@ -386,7 +394,7 @@ function emitOverlay(ent, hasAlphaTex, target, faces) {
 }
 
 // ---------- main ----------
-export { parseVmf, parseSides, sidePolygon, emitSolid, emitProp, emitOverlay, resolveModelBase, parts, propsMissing, SKIP };
+export { parseVmf, parseSides, sidePolygon, emitSolid, emitDisplacement, emitProp, emitOverlay, resolveModelBase, parts, propsMissing, SKIP };
 if (path.resolve(process.argv[1] ?? '') === path.resolve(import.meta.filename)) {
 const [vmfFile, outFile] = process.argv.slice(2);
 if (!vmfFile || !outFile) { console.log('usage: node tools/vmf-export.mjs <map.vmf> <out.glb>'); process.exit(1); }

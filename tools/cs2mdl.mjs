@@ -256,6 +256,7 @@ export function hasCs2Model(rel) {
 }
 
 export function loadCs2Model(rel, skin = 0, cap = MAX_TRIS) {
+  if (/foliage|curb|railing|fence|ladder|grate|arch/.test(rel)) cap = Infinity; // Keep thin surfaces and alpha-card UVs intact.
   const key = findCs2Model(rel), pak = cs2Pak();
   if (!key) return null;
   const bl = blocks(pak.read(key));

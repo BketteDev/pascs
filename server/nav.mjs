@@ -11,8 +11,11 @@ const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -
 export function loadOrBuildNav(world, spawns, mapDir) {
   const file = path.join(mapDir, 'nav.json');
   try { return fromJson(cleanNav(world, JSON.parse(fs.readFileSync(file, 'utf8')))); } catch { /* build below */ }
-  const t0 = performance.now(), nav = build(world, spawns);
-  fs.writeFileSync(file, JSON.stringify({ nodes: nav.nodes.map((n) => n.o.map((v) => Math.round(v * 10) / 10)), edges: nav.edges }));
+  const t0 = performance.now(), built = build(world, spawns);
+  // Rounding can push a node into an angled prop; validate the values we actually ship.
+  const data = cleanNav(world, { nodes: built.nodes.map((n) => n.o.map((v) => Math.round(v * 10) / 10)), edges: built.edges });
+  const nav = fromJson(data);
+  fs.writeFileSync(file, JSON.stringify(data));
   console.log(`nav built: ${nav.nodes.length} nodes in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   return nav;
 }

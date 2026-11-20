@@ -29,7 +29,7 @@ npm test
    e.g. `/opt/notcssource/assets/{maps,sound,players,weapons,ui}`.
 2. Portainer: **Stacks > Add stack > Repository**, this repo, compose path `docker-compose.yml`.
 3. Environment variables: `ADMIN_PASSWORD` (required), and optionally `ASSETS_DIR` (default `/opt/notcssource/assets`), `MAP`
-   (default `Source-Dust2`), `TEAM_SIZE` (default 5), `PORT` (default 6767).
+   (default `Source-Inferno`), `TEAM_SIZE` (default 5), `PORT` (default 6767).
 4. Deploy, then open `http://<host>:6767`.
 
 The server gzips map data on first request (cached in `.gzcache`) and revalidates files by ETag, so loads after the first are quick.
@@ -141,8 +141,7 @@ Les dossiers, les listes Admin, le tableau des scores et le titre de la page uti
 
 | Source | CS:GO |
 |---|---|
-| Source-Dust2 | GO-Agency |
-| Source-Inferno | GO-Bank |
+| Source-Inferno | GO-Agency |
 | Source-Nuke | GO-Italy |
 | Source-Office | GO-Lake |
 | | GO-Mirage |
@@ -150,7 +149,15 @@ Les dossiers, les listes Admin, le tableau des scores et le titre de la page uti
 | | GO-ShortDust |
 | | GO-ShortNuke |
 
-Le registre partagé est `public/maps.js`. Les anciens identifiants (`de_dust2`, `de_mirage_csgo_new`, etc.) restent acceptés dans `MAP`, dans la configuration, dans l’API Admin et dans les URL des ressources. Les convertisseurs BSP/VMF écrivent dans les nouveaux dossiers sans changer les noms des fichiers source BSP/VMF. Aucune reconstruction des textures ou des géométries n’est nécessaire après cette mise à jour.
+Le registre partagé est `public/maps.js`. Les sélecteurs affichent uniquement les dossiers canoniques de la catégorie choisie, même si un ancien serveur renvoie des alias en doublon. Les anciens identifiants des cartes actives (`cs_office`, `de_mirage`, `de_mirage_csgo_new`, etc.) restent acceptés dans `MAP`, la configuration, l’API Admin et les URL des ressources.
+
+`GO-Bank` et `Source-Dust2` sont désactivées : absentes des listes, refusées par l’API Admin et au démarrage, ressources HTTP en statut 410. Leurs fichiers et sources restent conservés. Les configurations existantes utilisant l’une de ces cartes doivent choisir une carte active ; le nouveau défaut est `Source-Inferno`.
+
+Italy, Overpass et ShortDust ont été reconstruites avec les overlays projetés et découpés sur leurs faces de support, les UV de relief calculés sur la surface plane d’origine et sans simplification des modèles fins (bordures, végétation, grilles, barrières). Le ciel partage toujours l’orientation de la caméra du jeu, y compris sans ciel 3D. `npm run test:rendering` vérifie ces conventions sans GPU.
+
+Les conventions ont été comparées aux sources Valve : [rotations Source](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/mathlib/mathlib_base.cpp), [plans et axes des faces VMF](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/utils/vbsp/map.cpp) et [caméra du ciel 3D](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/game/client/viewrender.cpp).
+
+Limites des ressources disponibles : Overpass référence encore `models/props_equipment/metal_ladder002_new.mdl` et `models/props_canal/canal_bars00{1,2,3}.mdl`, absents des sources installées ; les garde-corps `props_mill/stair_railing_{long,short}.mdl` utilisent toujours une substitution Inferno aux dimensions différentes. Leur restauration fidèle reste nécessaire. Des matériaux de remplacement et des modèles absents subsistent également sur Italy et ShortDust. Les tests structurels ne prouvent pas la fidélité visuelle de ces éléments.
 
 ## Téléphone et accessibilité
 

@@ -6,7 +6,7 @@ import os from 'os';
 import crypto from 'crypto';
 import zlib from 'zlib';
 import { WebSocketServer } from 'ws';
-import { mapDetails, mapFolder } from './public/maps.js';
+import { mapDetails, mapFolder, PLAYABLE_MAPS } from './public/maps.js';
 import { createGame } from './server/game.mjs';
 
 const pub = path.join(import.meta.dirname, 'public');
@@ -45,6 +45,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.startsWith('/maps/')) {
     const parts = url.slice(6).split('/'), canonical = mapFolder(parts[0]);
+    if (mapDetails(parts[0])?.enabled === false) return res.writeHead(410).end('map disabled');
     if (canonical && canonical !== parts[0] && parts.slice(1).every((part) => part !== '..' && !part.includes('\\'))) return serve(req, res, path.join(pub, 'maps', canonical, ...parts.slice(1)));
   }
   const [dir, rel] = url.startsWith('/vendor/') ? [vendor, url.slice(8)] : [pub, url];
@@ -89,7 +90,7 @@ function serve(req, res, file, packed = false) {
 }
 // One game per server run, set in server.config.json: { port, map, teamSize } (teamSize = players per team, bots fill empty slots; null = the map's default)
 const configFile = path.join(import.meta.dirname, 'server.config.json'); // optional: Docker passes the same settings as environment variables
-const config = { port: 6767, map: 'Source-Dust2', teamSize: null, ...(fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {}) };
+const config = { port: 6767, map: 'Source-Inferno', teamSize: null, ...(fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {}) };
 if (process.env.PORT) config.port = Number(process.env.PORT); // environment overrides, e.g. PORT=7000 MAP=de_inferno TEAM_SIZE=1 npm start
 if (process.env.MAP) config.map = process.env.MAP;
 if (process.env.TEAM_SIZE) config.teamSize = Number(process.env.TEAM_SIZE);
@@ -99,7 +100,8 @@ if (process.env.SNAPSHOT_RATE) config.snapshotRate = Number(process.env.SNAPSHOT
 if (process.env.MODE) config.mode = process.env.MODE; // 'range': shooting range (target bots, no rounds)
 const mapGame = (m) => mapDetails(m)?.game ?? 'csgo';
 config.map = mapFolder(config.map);
-const builtMaps = () => fs.readdirSync(path.join(pub, 'maps')).filter((m) => fs.existsSync(path.join(pub, 'maps', m, 'world.json')));
+const builtMaps = () => PLAYABLE_MAPS.map((m) => m.directory).filter((m) => fs.existsSync(path.join(pub, 'maps', m, 'world.json')));
+if (mapDetails(config.map)?.enabled === false) { console.error(`map "${config.map}" is disabled; choose an active map (e.g. Source-Inferno)`); process.exit(1); }
 if (!builtMaps().includes(config.map)) { console.error(`map "${config.map}" is not built: public/maps/${config.map}/world.json is missing (npm run build)`); process.exit(1); }
 const wss = new WebSocketServer({ server, path: '/game', maxPayload: 16384 });
 const newGame = () => createGame({ mapDir: path.join(pub, 'maps', config.map), teamSize: config.teamSize, maxPlayers: config.maxPlayers, bots: config.bots !== false, range: config.mode === 'range', botDifficulty: config.botDifficulty ?? 'easy', snapshotRate: config.snapshotRate ?? 32 });
