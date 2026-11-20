@@ -2,11 +2,11 @@
 // and the Options window in CS:S's olive VGUI style (tabs, sliders, OK / Cancel / Apply). One server only: JOIN GAME joins it.
 // Settings live in localStorage ('settings', plus 'crosshair', 'playerName', 'binds', 'adminPass') and are handed to onSettings.
 // With a valid admin password (Options > Multiplayer) an ADMIN item opens the server admin window (map, team size, max players).
-import { ACTIONS, DEFAULT_BINDS, binds, setBinds, keyName } from './binds.js';
+import { ACTIONS, binds, setBinds, keyName, KEYBOARD_PRESETS, setKeyboardLayout, keyboardLayout } from './binds.js';
 import { WEAPONS } from './weapon-defs.js';
 import { loadCosmetics, equippedCosmetic, equipCosmetic } from './cosmetics.js';
 import { GLYPH } from './hud.js';
-export const DEFAULTS = { sens: 2.5, invert: false, master: 1, ambience: 1, brightness: 1, showFps: false, renderScale: 1, texLow: false, touchMode: 'auto', touchSens: 1.0, touchLeftFire: true };
+export const DEFAULTS = { sens: 2.5, invert: false, master: 1, ambience: 1, brightness: 1, showFps: false, renderScale: 1, texLow: false, touchMode: 'auto', touchSens: 1.0, touchLeftFire: true, touchScale: 1 };
 const XH_DEFAULT = { color: '#32fa32', alpha: 1, length: 6, thickness: 2, gap: 3, outline: 0, dot: false, dynamic: true };
 const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === 'object' ? { ...d, ...v } : { ...d }; } catch { return { ...d }; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked: this session only */ } };
@@ -18,19 +18,20 @@ const adminPost = (body) => fetch('/api/admin', { method: 'POST', body: JSON.str
 export const loadName = () => { try { return localStorage.getItem('playerName') ?? ''; } catch { return ''; } };
 const esc = (t) => String(t).replace(/[<>&"]/g, '');
 
-export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame }) {
+export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouchLayout, inGame }) {
   const el = document.createElement('div'); el.id = 'mainmenu'; document.body.append(el);
   el.innerHTML = `<div class="mm-logo"><b>COUNTER-STRIKE</b><span>SOURCE</span></div><div class="mm-items"></div><div class="mm-win" hidden></div>`;
   const items = el.querySelector('.mm-items'), win = el.querySelector('.mm-win');
   let shown = false, adminOk = false;
   if (loadAdminPass()) adminPost({ password: loadAdminPass() }).then((r) => { adminOk = !!r.ok; if (shown) renderItems(); }); // still valid on this server?
   function renderItems() {
-    const list = [[inGame() ? 'Resume Game' : 'Join Game', 'play'], ['Inventory', 'inventory'], ['Options', 'options'], ...(adminOk ? [['Admin', 'admin']] : []), ['Quit', 'quit']];
+    const list = [[inGame() ? 'Resume Game' : 'Join Game', 'play'], ['Inventory', 'inventory'], ['Options', 'options'], ['Guide / How to play', 'guide'], ...(adminOk ? [['Admin', 'admin']] : []), ['Quit', 'quit']];
     items.innerHTML = list.map(([t, a]) => `<div class="mm-item" data-a="${a}">${t}</div>`).join('');
   }
   items.addEventListener('click', (e) => {
     const a = e.target.closest('[data-a]')?.dataset.a;
-    if (a === 'play') { if (!loadName()) nameWindow(); else { close(); onPlay(); } }
+    if (a === 'play') { if (!loadName()) nameWindow(); else beginPlay(); }
+    else if (a === 'guide') guideWindow(false);
     else if (a === 'inventory') inventoryWindow();
     else if (a === 'options') optionsWindow();
     else if (a === 'admin') adminWindow();
@@ -42,7 +43,7 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
     win.hidden = false;
     win.innerHTML = `<div class="vg-title">${title}<i data-b="cancel">&#10005;</i></div><div class="vg-body">${body}</div><div class="vg-buttons">${buttons.map(([t, b]) => `<button data-b="${b}">${t}</button>`).join('')}</div>`;
   };
-  const closeWin = () => { win.hidden = true; win.innerHTML = ''; win.onclick = null; };
+  const closeWin = () => { capture = null; setKeyboardLayout(keyboardLayout()); win.hidden = true; win.innerHTML = ''; win.onclick = null; };
   async function inventoryWindow() {
     frame('Inventory', '<div class="inventory-page"><div class="inventory-filter"><select aria-label="Item type"></select><input type="search" placeholder="Search skins" aria-label="Search skins"></div><small class="inventory-hint" hidden>Gloves apply to compatible CS:GO weapon and knife skins.</small><div class="inventory-grid"></div></div>', [['Close', 'cancel']]);
     const page = win.querySelector('.inventory-page');
@@ -99,10 +100,32 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
     weapon.onchange = search.oninput = render;
     render();
   }
+  function beginPlay() {
+    let seen = false; try { seen = localStorage.getItem('guideSeen') === '1'; } catch {}
+    if (!seen) guideWindow(true); else { close(); onPlay(); }
+  }
+  function guideWindow(startAfter) {
+    const key = (action) => `<kbd>${esc(keyName(binds[action]))}</kbd>`;
+    frame('Guide / Bien démarrer', `<div class="vg-page vg-guide">
+      <p>Choisis ton équipe. Achète ton équipement au début de la manche, puis joue l’objectif : poser/désamorcer la bombe ou sauver les otages.</p>
+      <p>Clavier : ${key('forward')} ${key('left')} ${key('back')} ${key('right')} pour bouger, ${key('jump')} pour sauter, ${key('duck')} pour s’accroupir, ${key('walk')} pour marcher sans bruit.</p>
+      <p>${key('buy')} : acheter · ${key('reload')} : recharger · ${key('use')} : utiliser/désamorcer · ${key('scores')} : scores. Souris gauche : tirer ; droite : zoom/action secondaire. 1–5 : armes et grenades.</p>
+      <p>Mobile : joue en paysage. Pouce gauche pour bouger (petits mouvements = marche), glisse à droite pour viser. Garde FIRE appuyé en glissant pour viser et tirer. USE sert aussi à désamorcer.</p>
+      <p>Options → Keyboard : AZERTY/QWERTY et touches personnalisées. Options → Touch : sensibilité, taille et disposition des boutons.</p>
+      <p>Après une coupure, la reconnexion est automatique. Ta place est réservée 30 secondes ; ton personnage reste vulnérable pendant l’absence.</p>
+    </div>`, [[startAfter ? 'Jouer / Play' : 'Close', 'done']]);
+    win.onclick = (e) => {
+      if (e.target.dataset.b === 'cancel') { closeWin(); return; }
+      if (e.target.dataset.b !== 'done') return;
+      try { localStorage.setItem('guideSeen', '1'); } catch {}
+      closeWin(); if (startAfter) { close(); onPlay(); }
+    };
+  }
+
   function nameWindow() { // first JOIN GAME: pick a name (it is remembered; Options > Multiplayer changes it later)
     frame('Player Name', '<label class="vg-row">Name <input class="vg-text" maxlength="24" autocomplete="nickname"></label>', [['OK', 'ok'], ['Cancel', 'cancel']]);
     const input = win.querySelector('input'); input.focus();
-    const ok = () => { const n = input.value.trim().slice(0, 24); if (!n) return; try { localStorage.setItem('playerName', n); } catch {} onSettings({ name: n }); closeWin(); close(); onPlay(); };
+    const ok = () => { const n = input.value.trim().slice(0, 24); if (!n) return; try { localStorage.setItem('playerName', n); } catch {} onSettings({ name: n }); closeWin(); beginPlay(); };
     input.onkeydown = (e) => { if (e.key === 'Enter') ok(); };
     win.onclick = (e) => { const b = e.target.dataset.b; if (b === 'ok') ok(); else if (b === 'cancel') closeWin(); };
   }
@@ -119,7 +142,7 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
   function optionsWindow() {
     const s = loadSettings(), draft = { ...s, name: loadName(), adminPass: loadAdminPass(), binds: { ...binds }, xh: loadCrosshair() };
     const pct = (v) => Math.round(v * 100) + '%', px = (v) => v + ' px';
-    const FMT = { sens: (v) => Number(v).toFixed(2), touchSens: (v) => Number(v).toFixed(2), master: pct, ambience: pct, brightness: pct, renderScale: pct, 'xh.alpha': pct, 'xh.length': px, 'xh.thickness': px, 'xh.gap': px, 'xh.outline': px };
+    const FMT = { sens: (v) => Number(v).toFixed(2), touchSens: (v) => Number(v).toFixed(2), touchScale: pct, master: pct, ambience: pct, brightness: pct, renderScale: pct, 'xh.alpha': pct, 'xh.length': px, 'xh.thickness': px, 'xh.gap': px, 'xh.outline': px };
     const val = (k) => (k.startsWith('xh.') ? draft.xh[k.slice(3)] : draft[k]);
     const slider = (k, label, min, max, step) => `<label class="vg-row">${label}<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${val(k)}"><output>${FMT[k](val(k))}</output></label>`;
     const check = (k, label) => `<label class="vg-row vg-check"><input type="checkbox" data-k="${k}" ${val(k) ? 'checked' : ''}>${label}</label>`;
@@ -128,10 +151,11 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
       return `<div class="vg-preview" style="opacity:${x.alpha}">${bar(`left:${-T / 2}px;top:${-G - L}px;width:${T}px;height:${L}px`)}${bar(`left:${-T / 2}px;top:${G}px;width:${T}px;height:${L}px`)}${bar(`top:${-T / 2}px;left:${-G - L}px;height:${T}px;width:${L}px`)}${bar(`top:${-T / 2}px;left:${G}px;height:${T}px;width:${L}px`)}${x.dot ? bar(`left:${-T / 2}px;top:${-T / 2}px;width:${T}px;height:${T}px`) : ''}</div>`; };
     const TABS = {
       Keyboard: () => `<div class="vg-keys">${ACTIONS.map(([a, label]) => `<div class="vg-key"><span>${label}</span><button data-bind="${a}" class="${capture?.action === a ? 'wait' : ''}">${capture?.action === a ? 'Press a key...' : keyName(draft.binds[a])}</button></div>`).join('')}</div>` +
+        '<div class="vg-row vg-note"><span><button data-b="azerty">AZERTY</button> <button data-b="qwerty">QWERTY</button></span><span></span></div>' +
         '<div class="vg-row vg-note">Click an action, then press its new key (Esc cancels). Weapons: 1-6. <button data-b="keydefaults">Use defaults</button></div>',
       Mouse: () => slider('sens', 'Mouse sensitivity', 0.2, 10, 0.05) + check('invert', 'Reverse mouse'),
       Touch: () => select('touchMode', 'Touch controls', [['auto', 'Auto (mobile)'], ['on', 'Always on'], ['off', 'Off']]) +
-        slider('touchSens', 'Touch look speed', 0.3, 3.0, 0.05) + check('touchLeftFire', 'Extra fire button on left side'),
+        slider('touchSens', 'Touch look speed', 0.3, 3.0, 0.05) + check('touchLeftFire', 'Extra fire button on left side') + slider('touchScale', 'Button size', 0.75, 1.4, 0.05) + '<button data-b="touchlayout">Déplacer les boutons / Edit layout</button>',
       Crosshair: () => `<div class="vg-xh"><div>${`<label class="vg-row">Color<input type="color" data-k="xh.color" value="${draft.xh.color}"><span></span></label>`}${slider('xh.alpha', 'Opacity', 0.1, 1, 0.01)}${slider('xh.length', 'Length', 1, 20, 1)}${slider('xh.thickness', 'Thickness', 1, 6, 1)}${slider('xh.gap', 'Gap', 0, 15, 1)}${slider('xh.outline', 'Outline', 0, 2, 1)}` +
         `${check('xh.dot', 'Center dot')}${check('xh.dynamic', 'Dynamic (opens with movement and firing)')}</div><div class="vg-previewbox">${preview()}</div></div>`,
       Audio: () => slider('master', 'Game volume', 0, 1, 0.01) + slider('ambience', 'Ambient sound volume', 0, 1, 0.01),
@@ -154,6 +178,7 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
     };
     const apply = () => {
       const next = Object.fromEntries(Object.keys(DEFAULTS).map((k) => [k, draft[k]]));
+      if (draft.keyboardLayout) { try { localStorage.setItem('keyboardLayout', draft.keyboardLayout); } catch {} }
       save('settings', next); save('crosshair', draft.xh); setBinds(draft.binds);
       const name = String(draft.name ?? '').trim().slice(0, 24);
       if (name) try { localStorage.setItem('playerName', name); } catch {}
@@ -171,8 +196,12 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
       if (e.target.dataset.t) { tab = e.target.dataset.t; capture = null; draw(); return; }
       if (e.target.dataset.bind) { capture = { action: e.target.dataset.bind, draft, redraw: draw }; draw(); return; }
       const b = e.target.dataset.b;
-      if (b === 'keydefaults') { draft.binds = { ...DEFAULT_BINDS }; draw(); }
-      else if (b === 'apply') apply(); else if (b === 'ok') { apply(); closeWin(); } else if (b === 'cancel') { capture = null; closeWin(); }
+      if (b === 'touchlayout') { apply(); closeWin(); onTouchLayout?.(); }
+      else if (b === 'azerty' || b === 'qwerty') {
+        draft.binds = { ...KEYBOARD_PRESETS[b] }; draft.keyboardLayout = b; setKeyboardLayout(b); draw();
+      }
+      else if (b === 'keydefaults') { draft.binds = { ...KEYBOARD_PRESETS[draft.keyboardLayout ?? keyboardLayout()] }; draw(); }
+      else if (b === 'apply') apply(); else if (b === 'ok') { apply(); closeWin(); } else if (b === 'cancel') { capture = null; setKeyboardLayout(keyboardLayout()); closeWin(); }
     };
   }
 
@@ -189,6 +218,8 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
       <label class="vg-row">Team size (bots fill)<input class="vg-text" type="number" min="1" max="16" data-a="teamSize" value="${info.teamSize ?? 5}"><span></span></label>
       <label class="vg-row">Max players<input class="vg-text" type="number" min="1" max="32" data-a="maxPlayers" value="${info.maxPlayers ?? 10}"><span></span></label>
       <label class="vg-row vg-check"><input type="checkbox" data-a="bots" ${roster.bots !== false ? 'checked' : ''}>Bots fill the empty slots</label>
+      <label class="vg-row">Bot difficulty<select data-a="botDifficulty">${[['easy', 'Facile'], ['normal', 'Normal'], ['hard', 'Difficile']].map(([v, label]) => `<option value="${v}"${v === (info.botDifficulty ?? 'easy') ? ' selected' : ''}>${label}</option>`).join('')}</select><span></span></label>
+      <label class="vg-row">Network updates<select data-a="snapshotRate">${[16, 32, 64, 128].map((hz) => `<option value="${hz}"${hz === (info.snapshotRate ?? 32) ? ' selected' : ''}>${hz} Hz</option>`).join('')}</select><span></span></label>
       <div class="vg-players">${(roster.players ?? []).map((p) => `<div class="vg-player"><span>${esc(p.name)}</span><small>${p.team === 'spec' ? 'spectator' : p.team.toUpperCase()} · ${p.ping} ms</small><button data-kick="${p.id}">Kick</button></div>`).join('') || '<div class="vg-player"><small>No players connected</small></div>'}</div>
       <div class="vg-row vg-note">Applying restarts the game on the new settings: everyone reloads into it.<span></span><output class="vg-status"></output></div></div>`, [['Apply', 'apply'], ['Close', 'cancel']]);
     win.querySelector('[data-a="game"]').onchange = (e) => { win.querySelector('[data-a="map"]').innerHTML = mapOpts(e.target.value, info.map); };
@@ -199,7 +230,7 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, inGame 
       if (b !== 'apply') return;
       const v = (k) => win.querySelector(`[data-a="${k}"]`).value, status = win.querySelector('.vg-status');
       status.textContent = '...';
-      const r = await adminPost({ password: loadAdminPass(), map: v('map'), teamSize: Number(v('teamSize')), maxPlayers: Number(v('maxPlayers')), bots: win.querySelector('[data-a="bots"]').checked });
+      const r = await adminPost({ password: loadAdminPass(), map: v('map'), teamSize: Number(v('teamSize')), maxPlayers: Number(v('maxPlayers')), bots: win.querySelector('[data-a="bots"]').checked, botDifficulty: v('botDifficulty'), snapshotRate: Number(v('snapshotRate')) });
       status.textContent = r.msg ?? (r.ok ? 'ok' : 'failed');
     };
   }

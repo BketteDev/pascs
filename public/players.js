@@ -53,7 +53,7 @@ const mul34 = (a, ai, b, bi, o, oi) => {
 };
 const toThree = (m, i, e) => { for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) e[c * 4 + r] = m[i + r * 4 + c]; e[3] = e[7] = e[11] = 0; e[15] = 1; };
 
-export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, gain, play, fog, light, skyBrush, fogGlsl, getMyTeam, getMyId, mapName }) {
+export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, gain, play, fog, light, skyBrush, fogGlsl, getMyTeam, getMyId, mapName, snapshotRate = 32 }) {
   const [info, bin] = await Promise.all([fetch('players/players.json').then((r) => r.json()), fetch('players/players.bin').then((r) => r.arrayBuffer()), loadRocketModels(loadTex)]);
   const canon = new Map(info.bones.map((n, i) => [n, i]));
   const views = new Map(); // byte offset -> Float32Array(frames * bones * 7): the upper-body layer poses and gesture clips (tools/players.mjs)
@@ -196,7 +196,7 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
     const ids = new Set(snap.ents.map((e) => e.id));
     for (const bot of [...bots]) if (!ids.has(bot.id)) removeBot(bot); // left / replaced by a human
   }
-  const renderDelay = () => Math.min(Math.max(2.5 / 128 + lateness * 1.5, 0.03), 0.25); // 2.5 snapshots (128 Hz) + jitter margin
+  const renderDelay = () => Math.min(Math.max(2 / snapshotRate + lateness * 1.5, 0.03), 0.25); // two network snapshots + jitter margin; simulation still runs at 128 Hz
   // other live players as the latest snapshot has them: solid to our own movement prediction (physics.js separate())
   const solids = () => { const last = buffer[buffer.length - 1], out = []; if (last) for (const [id, e] of last.ents) if (id !== getMyId() && e.alive && e.team !== 'h') out.push({ o: e.o, ducked: !!e.duck }); return out; }; // hostages do not block (as on the server)
   const lerpAngle = (a, b, k) => a + (((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * k;
@@ -638,5 +638,5 @@ export async function createPlayers({ loadTex, worldRoot, world, bulletLimit, ga
   }
 
   const agentNames = (team) => agentsFor(mapName, team).map((n) => AGENT_NAMES[n]);
-  return { renderTick: () => renderTick, clearDecals, shotFx, removeSelf, portraitScenes, solids, drawPortrait, agentNames, applySnapshot, onDeath, update, hitTest, feedback, alive, bots, byId, setSpectated, syncDrops };
+  return { resetInterpolation: () => { buffer.length = 0; clockOffset = null; renderTick = null; lateness = 0.008; }, renderTick: () => renderTick, clearDecals, shotFx, removeSelf, portraitScenes, solids, drawPortrait, agentNames, applySnapshot, onDeath, update, hitTest, feedback, alive, bots, byId, setSpectated, syncDrops };
 }

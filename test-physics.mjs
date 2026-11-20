@@ -4,7 +4,7 @@ import { Player, makeWorld, trace, TICK } from './public/physics.js';
 const T = (sec) => Math.round(sec / TICK); // tests are written in seconds so they hold at any tick rate
 
 const world = JSON.parse(fs.readFileSync('public/maps/de_dust2/world.json', 'utf8'));
-const L = 1e5; // big synthetic floor (top at z=0) for open-field tests
+const L = 8192; // big synthetic floor (top at z=0) for open-field tests
 const floor = [-L, -L, -50, L, L, 0, 0, 0, 1, 0, 0, 0, -1, 50, 1, 0, 0, L, -1, 0, 0, L, 0, 1, 0, L, 0, -1, 0, L];
 const field = () => { const p = new Player(makeWorld([floor]), [0, 0, 2]); run(p, T(0.45), {}); return p; };
 const run = (p, n, inp) => { for (let i = 0; i < n; i++) p.tick(inp); };

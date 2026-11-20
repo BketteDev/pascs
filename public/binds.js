@@ -8,12 +8,20 @@ export const ACTIONS = [
   ['buy', 'Buy menu', 'KeyB'], ['team', 'Select team', 'KeyM'], ['chat', 'Chat message (All)', 'KeyY'], ['teamchat', 'Team chat message', 'KeyU'], ['scores', 'Show scores', 'Tab'], ['quit', 'Quick quit (close tab)', 'F10'],
 ];
 export const DEFAULT_BINDS = Object.fromEntries(ACTIONS.map(([a, , k]) => [a, k]));
-export const binds = (() => { try { return { ...DEFAULT_BINDS, ...JSON.parse(localStorage.getItem('binds') ?? '{}') }; } catch { return { ...DEFAULT_BINDS }; } })();
+// KeyboardEvent.code uses physical positions: KeyW is the Z key on AZERTY.
+export const KEYBOARD_PRESETS = { qwerty: { ...DEFAULT_BINDS }, azerty: { ...DEFAULT_BINDS, forward: 'KeyW', left: 'KeyA', lastweapon: 'KeyQ', team: 'Semicolon' } };
+export const keyboardLayout = () => { try { return localStorage.getItem('keyboardLayout') ?? (/^fr/i.test(navigator.language) ? 'azerty' : 'qwerty'); } catch { return 'qwerty'; } };
+export const binds = (() => { try { return { ...KEYBOARD_PRESETS[keyboardLayout()], ...JSON.parse(localStorage.getItem('binds') ?? '{}') }; } catch { return { ...DEFAULT_BINDS }; } })();
 export const is = (action, code) => !!code && binds[action] === code;
 export function setBinds(next) {
   Object.assign(binds, next);
   try { localStorage.setItem('binds', JSON.stringify(binds)); } catch { /* storage blocked: this session only */ }
 }
 /** 'KeyW' -> 'W', 'Digit1' -> '1', 'ControlLeft' -> 'Ctrl'... for the Keyboard tab. */
-export const keyName = (code) => !code ? '(none)' : code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ').replace(/(Left|Right)$/, (m) => (m === 'Right' ? ' (R)' : ''))
-  .replace('Control', 'Ctrl').replace('Arrow', 'Arrow ').replace('Backquote', '`');
+let keyLabels = {};
+export function setKeyboardLayout(layout) {
+  keyLabels = layout === 'azerty' ? { KeyW: 'Z', KeyA: 'Q', KeyQ: 'A', KeyZ: 'W', KeyM: ',', Semicolon: 'M' } : {};
+}
+setKeyboardLayout(keyboardLayout());
+export const keyName = (code) => keyLabels[code] ?? (!code ? '(none)' : code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ').replace(/(Left|Right)$/, (m) => (m === 'Right' ? ' (R)' : ''))
+  .replace('Control', 'Ctrl').replace('Arrow', 'Arrow ').replace('Backquote', '`'));

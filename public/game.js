@@ -24,7 +24,7 @@ const MAP_NAME = /^[a-z0-9_]+$/.test(window.__map ?? '') ? window.__map : 'de_du
 document.title = 'CS:S Web - ' + MAP_NAME;
 // loading screen: staged progress, hidden once every texture has reached the GPU
 const loadingEl = document.getElementById('loading');
-const setLoad = (pct) => { document.getElementById('loadfill').style.width = pct + '%'; }; // the loading screen is just the agent and this bar
+const setLoad = (pct, message) => { document.getElementById('loadfill').style.width = pct + '%'; if (message) document.getElementById('loadstatus').textContent = message; }; // the loading screen is just the agent and this bar
 setLoad(5, 'Loading map...');
 const gain = Number(q.get('gain') ?? 1.0); // lightmap overbright, tweak with ?gain=
 const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: false, powerPreference: 'high-performance' });
@@ -43,10 +43,11 @@ const resize = () => {
 addEventListener('resize', resize); addEventListener('orientationchange', resize); visualViewport?.addEventListener('resize', resize); resize();
 
 // ---------- assets ----------
+const fetchAsset = async (url) => { const r = await fetch(url, { signal: AbortSignal.timeout(60000) }); if (!r.ok) throw new Error(`Missing asset: ${url} (HTTP ${r.status})`); return r; };
 const base = `maps/${MAP_NAME}/`;
 const [world, bin, lmTex] = await Promise.all([ // map geometry + lightmap
-  fetch(base + 'world.json').then((r) => r.json()),
-  fetch(base + 'world.bin').then((r) => r.arrayBuffer()),
+  fetchAsset(base + 'world.json').then((r) => r.json()),
+  fetchAsset(base + 'world.bin').then((r) => r.arrayBuffer()),
   new THREE.TextureLoader().loadAsync(base + 'lightmap.png'),
 ]);
 lmTex.colorSpace = THREE.NoColorSpace; lmTex.flipY = false; lmTex.generateMipmaps = false; lmTex.minFilter = THREE.LinearFilter;
@@ -67,6 +68,10 @@ const loadTex = (file, apply) => { // file = URL relative to the page; shared pe
       }
       t.wrapS = t.wrapT = THREE.RepeatWrapping; t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.anisotropy = TEX_LOW ? 1 : Math.min(4, renderer.capabilities.getMaxAnisotropy());
       renderer.initTexture(t); texCache.set(file, t); waiting.forEach((fn) => fn(t)); texDone++;
+    }, undefined, () => {
+      texDone++; texCache.set(file, white); waiting.forEach((fn) => fn(white));
+      window.__assetWarnings = (window.__assetWarnings ?? 0) + 1;
+      console.warn('Texture unavailable:', file);
     });
   } else if (Array.isArray(texCache.get(file))) texCache.get(file).push(apply);
   else apply(texCache.get(file));
@@ -209,7 +214,6 @@ if (q.get('pos')) { // debug: ?pos=x,y,z&yaw=deg&pitch=deg&freeze (only meaningf
   player.prev = { o: [...player.o], eyeZ: 64 };
 }
 
-setLoad(45, 'Loading weapons...');
 setLoad(30, 'Connecting to the game server...');
 const hud = createHud({ player, overview: { ...(world.overview ?? { pos_x: 0, pos_y: 0, scale: 8 }), src: base + 'overview.png' }, getBots: () => players?.bots ?? [], getTeam: () => you.team, getBomb: () => lastBomb });
 const pending = []; // usercmds the server has not acknowledged yet: { cmd, o } (o = our predicted position after the cmd)
@@ -362,6 +366,7 @@ function onSnap(d, arrival) {
   hud.setBomb({ carrying: y.alive && y.owned.includes('c4'), inSite: y.inSite, act: y.act });
   if (defuseHeld && (!y.alive || d.bomb?.s !== 'planted')) stopDefuse();
   weapons?.setLoadout(y.owned, y.weapon);
+  weapons?.syncAmmo(y.ammo, y.ammoAck);
   players?.syncDrops(d.drops ?? []);
   grenades?.sync(d.gr ?? [], d.smokes ?? [], d.fires ?? []);
   roster = d.ents; if (buyMenu?.isOpen()) buyMenu.refresh(); if (teamMenu?.isOpen()) teamMenu.refresh();
@@ -369,15 +374,22 @@ function onSnap(d, arrival) {
 }
 const netWarn = document.getElementById('netwarn');
 const PLAYER_NAME = window.__name || 'Player'; // asked for in index.html before the game loads
-let chat = null;
-const net = connectToServer({ name: PLAYER_NAME, map: MAP_NAME, onSnap, onNotice: (text) => hud.notice(text), onChat: (m) => chat?.add(m) });
+let chat = null, touch = null, joined = false, mainMenu = null;
+const net = connectToServer({ name: PLAYER_NAME, map: MAP_NAME, onSnap, onNotice: (text) => hud.notice(text), onChat: (m) => chat?.add(m), onResume: (d) => {
+  pending.length = 0; seq = d.you.ack ?? 0; applyServerState(d.you);
+  player.yaw = d.you.yaw ?? player.yaw; player.prev = { o: [...player.o], eyeZ: player.eyeZ };
+  players?.resetInterpolation();
+  if (weapons) { weapons.state.reload = null; weapons.state.held = false; weapons.state.burstLeft = 0; weapons.setLoadout(d.you.owned, d.you.weapon, true); }
+  touch?.reset(); joined = d.you.team !== 'spec';
+  if (mainMenu && !joined) mainMenu.open();
+} });
 net.name = PLAYER_NAME;
 const scoreboard = createScoreboard({ getRoster: () => roster, getRound: () => roundState, getMyId: () => net.id, mapName: MAP_NAME });
-try { await net.ready; } catch (e) { setLoad(30, 'Cannot join: the server is full or not running (npm start)'); throw e; }
+await net.ready;
 you = net.first.you; if (!(q.get('pos') && q.has('freeze'))) { applyServerState(you); player.yaw = you.yaw ?? 0; player.prev = { o: [...player.o], eyeZ: player.eyeZ }; }
 let devPanel = null;
 // ---------- main menu (Join / Resume, Options, Quit) over the live game; Esc opens it while playing, Esc in it leaves fullscreen ----------
-let joined = false, settings = loadSettings();
+let settings = loadSettings();
 function applySettings(s) {
   settings = { ...settings, ...s };
   setVolumes({ master: settings.master, ambience: settings.ambience });
@@ -388,6 +400,7 @@ function applySettings(s) {
   if (s.name) { net.name = s.name; net.send({ t: 'name', name: s.name }); }
 }
 function quitGame() {
+  net.close();
   renderer.setAnimationLoop(null);
   navigator.keyboard?.unlock?.();
   document.exitPointerLock?.();
@@ -396,22 +409,24 @@ function quitGame() {
   if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}).finally(() => window.close());
   setTimeout(() => { if (history.length > 1) history.go(1 - history.length); else location.replace('about:blank'); }, 150);
 }
-const mainMenu = createMainMenu({
+mainMenu = createMainMenu({
   inGame: () => joined,
   onPlay: () => { if (joined) startPlay(); else teamMenu.open(); },
   onQuit: quitGame, // a tab the user opened can't always close itself: wipe and leave immediately
   onSettings: applySettings,
   onCosmetic: (key) => weapons?.refreshCosmetic(key),
+  onTouchLayout: () => { mainMenu.close(); touch?.editLayout(() => mainMenu.open()); },
 });
-let touch = null;
-const uiOpen = () => !!(buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen() || chat?.isOpen());
-const canPlay = () => !uiOpen() && (!!document.pointerLockElement || !!(touch?.isEnabled() && joined));
-weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, canFire: canPlay, initial: { owned: you.owned, weapon: you.weapon } });
+const uiOpen = () => !!(touch?.isEditing() || buyMenu?.isOpen() || teamMenu?.isOpen() || devPanel?.isOpen() || mainMenu.isOpen() || chat?.isOpen());
+const canPlay = () => net.connected && !uiOpen() && (!!document.pointerLockElement || !!(touch?.isEnabled() && joined));
+setLoad(45, 'Loading weapons...');
+weapons = await createWeapons({ loadTex, player, world: playerWorld, bulletLimit: world.collision.length, surfOf: world.surfOf, surfaces: world.surfaces, worldRoot, hud, renderer, targets: () => players, net, uiOpen, alive: () => !!you.alive, canFire: () => canPlay() && roundState.phase === 'live', initial: { owned: you.owned, weapon: you.weapon } });
+weapons.syncAmmo(you.ammo, you.ammoAck);
 devPanel = createDevPanel({ hud, weapons, range: window.__mode === 'range' });
 grenades = await createGrenades({ worldRoot, loadTex });
 bombs = await createBombs({ worldRoot, loadTex, playAt });
 setLoad(65, 'Loading players...');
-players = await createPlayers({ loadTex, worldRoot, world: playerWorld, bulletLimit: world.collision.length, gain, play, fog: worldFog, light: world.light, skyBrush: new Set(world.skyBrushIdx ?? []), fogGlsl: FOG_GLSL, getMyTeam: () => you.team, getMyId: () => net.id, mapName: MAP_NAME });
+players = await createPlayers({ loadTex, worldRoot, world: playerWorld, bulletLimit: world.collision.length, gain, play, fog: worldFog, light: world.light, skyBrush: new Set(world.skyBrushIdx ?? []), fogGlsl: FOG_GLSL, getMyTeam: () => you.team, getMyId: () => net.id, mapName: MAP_NAME, snapshotRate: net.snapshotRate });
 players.applySnapshot(net.first, performance.now() / 1000);
 player.others = players.solids;
 buyMenu = createBuyMenu({ net, getState: () => you, canOpen: canPlay });
@@ -428,6 +443,7 @@ preload('player/headshot1', 'player/headshot2', 'player/damage1', 'player/damage
   'items/itempickup', 'weapons/c4/c4_plant',
   'weapons/c4/c4_beep1', 'weapons/c4/c4_click', 'weapons/c4/c4_disarm', 'radio/bombpl', 'radio/bombdef', 'radio/ctwin', 'radio/terwin'); // hit / drop / pickup / bomb / round sounds play without delay
 setLoad(100, 'Ready');
+if (window.__assetWarnings) hud.notice(`${window.__assetWarnings} textures unavailable; fallback textures applied`);
 loadingEl.style.opacity = 0; setTimeout(() => loadingEl.remove(), 450);
 applySettings({});
 if ((!q.has('shot') && !q.has('freeze')) || q.has('menu')) { mainMenu.open(); if (q.has('options')) mainMenu.options(); } // ?menu (&options): open it in screenshot runs too
@@ -600,7 +616,7 @@ renderer.setAnimationLoop((now) => {
       yaw: player.yaw, pitch: player.pitch,
     };
     if (roundState.phase === 'freeze' || !you.alive || weapons.state.planting || defuseHeld || you.act) { cmd.f = cmd.s = cmd.j = 0; } // freeze time / dead / planting / defusing: no moving (the server enforces it too)
-    if (!q.has('freeze')) {
+    if (!q.has('freeze') && net.connected) {
       player.tick(cmdInput(cmd));
       pending.push({ cmd, o: [...player.o] }); if (pending.length > 256) pending.shift();
       net.send(cmd);
@@ -608,11 +624,10 @@ renderer.setAnimationLoop((now) => {
   }
   const dead = !you.alive && (!!deadAt || you.team === 'spec');
   devPanel.update(); scoreboard.update();
-  // like CS:S: a red warning top right once the server goes quiet (snapshots come 128 times a second), counting down cl_timeout
-  const quiet = (now - net.lastMsg) / 1000, left = 60 - quiet, showWarn = !net.connected || quiet > 1;
+  // like CS:S: a red warning top right once the server goes quiet (snapshots come at the configured network rate)
+  const quiet = (now - net.lastMsg) / 1000, showWarn = !net.connected || quiet > 1;
   if (showWarn !== lastNetWarn) { lastNetWarn = showWarn; netWarn.style.display = showWarn ? 'block' : 'none'; }
-  if (showWarn) netWarn.textContent = net.kicked ? 'You were kicked from the server' : `WARNING:  Connection Problem
-${left > 0 ? `Auto-disconnect in ${left.toFixed(1)} seconds` : 'Disconnected'}`;
+  if (showWarn) netWarn.textContent = net.kicked ? 'You were kicked from the server' : net.ended ?? (net.reconnecting ? 'Connection lost — reconnecting…\nYour place is reserved for 30 seconds' : 'Waiting for the server…');
   if (!dead) {
     weapons.update(dt);
     if (lastDeathDisp) { lastDeathDisp = false; deathEl.style.display = 'none'; }

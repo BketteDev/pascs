@@ -1,5 +1,5 @@
 // Authoritative game server: runs every player (humans and bots) with the shared movement code at 128 Hz,
-// owns rounds / economy / damage / the bomb, and broadcasts a snapshot + events every tick (128 Hz).
+// owns rounds / economy / damage / the bomb, and broadcasts snapshots + accumulated events at a configurable rate (32 Hz by default).
 //
 // Protocol (JSON over WebSocket):
 //  client -> server  {t:'join', name, team?}  {t:'cmd', seq, f, s, j, d, w, yaw, pitch}  {t:'weapon', w}  {t:'fire', w}
@@ -9,6 +9,8 @@
 // Hits are client-reported (the client owns the animation poses the hitboxes need) but validated here: shooter and target alive,
 // enemies, in range, clear line of sight, and damage is computed from the weapon tables on the server.
 import fs from 'fs';
+import { randomBytes } from 'node:crypto';
+import { freshAmmo, advanceAmmo, reloadAmmo, consumeAmmo } from '../public/ammo.js';
 import path from 'path';
 import { Player, makeWorld, trace, TICK, TICK_RATE } from '../public/physics.js';
 import { createMovers } from '../public/movers.js';
@@ -23,7 +25,11 @@ const FREEZE = 5, ROUND_TIME = 115, END_TIME = 5, TEAM_SIZE = 5;
 const r2 = (v) => Math.round(v * 100) / 100;
 const rad = Math.PI / 180;
 
-export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer = BOMB.timer, botsFight = true, range = false, maxPlayers = null, bots: botsOn = true }) { // bots: false = humans only (no bots fill the teams) // range: shooting-range mode (no rounds, target bots)
+export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer = BOMB.timer, botsFight = true, range = false, maxPlayers = null, bots: botsOn = true, botDifficulty = 'easy', snapshotRate = 32, reconnectGrace = 30 }) { // bots: false = humans only (no bots fill the teams) // range: shooting-range mode (no rounds, target bots)
+  const difficulties = { easy: { reaction: 1, surprise: 0.8, jitter: 0.4, spread: 0.075 }, normal: { reaction: 0.5, surprise: 0.4, jitter: 0.25, spread: 0.035 }, hard: { reaction: 0.25, surprise: 0.2, jitter: 0.15, spread: 0.012 } };
+  if (!Object.hasOwn(difficulties, botDifficulty)) throw new Error('Unknown bot difficulty');
+  if (![16, 32, 64, 128].includes(snapshotRate)) throw new Error('Invalid snapshot rate');
+  const difficulty = difficulties[botDifficulty], snapshotEvery = TICK_RATE / snapshotRate;
   const worldJson = JSON.parse(fs.readFileSync(path.join(mapDir, 'world.json'), 'utf8'));
   const world = makeWorld(worldJson.collision.concat(worldJson.playerOnly ?? []), worldJson.ladders);
   const bulletLimit = worldJson.collision.length;
@@ -66,7 +72,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     return worldJson.surfaces?.[worldJson.surfOf?.[r.entry] ?? 0] ?? 'concrete';
   };
 
-  const ents = new Map();
+  const ents = new Map(), connections = new Map();
   let nextId = 1, tickNo = 0, events = [];
   const round = { phase: 'freeze', left: FREEZE, elapsed: 0, scores: { ct: 0, t: 0 }, number: 1, tSite: 0, rescued: 0 };
 
@@ -74,7 +80,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   function addEntity({ team, name, bot, ws = null, hostage = null }) {
     const ent = {
       id: nextId++, team, name, bot, ws, p: new Player(world), kills: 0, deaths: 0, ping: 0, health: 100, armor: 0, alive: true, money: START_MONEY,
-      owned: new Set(), gr: {}, weapon: 'usp', kit: false, planting: null, defusing: null, queue: [], stepTimer: 0, foot: 0, walk: false, lastSeq: 0, tokens: 32, lastCmdAt: performance.now(),
+      ammo: {}, ammoAck: 0, backlog: [], resumeToken: bot ? null : randomBytes(24).toString('hex'), disconnectedAt: null, owned: new Set(), gr: {}, weapon: 'usp', kit: false, planting: null, defusing: null, queue: [], stepTimer: 0, foot: 0, walk: false, lastSeq: 0, tokens: 32, lastCmdAt: performance.now(),
       hostage, ai: bot && !hostage ? { path: null, idx: 0, stuck: 0, walking: false, holdUntil: 0, holdCrouch: false, enemy: 0, threat: 0, shots: 0, nextShot: 0, react: 0, err: [0, 0], ammo: {}, reloadUntil: 0 } : null,
     };
     ents.set(ent.id, ent);
@@ -88,6 +94,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     if (ent.hostage) { ent.owned = new Set(); ent.gr = {}; ent.weapon = ''; ent.armor = 0; ent.helmet = false; ent.kit = false; return; }
     const pistol = DEFAULT_PISTOL[ent.team];
     ent.owned = new Set(['knife', pistol]); ent.gr = {}; ent.weapon = pistol; ent.armor = 0; ent.helmet = false; ent.kit = false;
+    ent.ammo = { [pistol]: freshAmmo(pistol) };
     ent.p.maxSpeed = WEAPONS[pistol].speed;
   }
   function spawn(ent) {
@@ -101,6 +108,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     ent.p.maxSpeed = ent.hostage ? 250 : WEAPONS[ent.weapon].speed;
     if (ent.hostage) Object.assign(ent.hostage, { leader: 0, path: null, stuck: 0 });
     ent.stepTimer = 0; ent.alive = true; ent.hasSpawned = true; ent.health = 100; ent.planting = ent.defusing = null; ent.queue.length = 0;
+    for (const k of ent.owned) if (WEAPONS[k]?.mag) ent.ammo[k] = freshAmmo(k);
+    ent.fireTok = 3; ent.fireAt = now(); ent.rocketAt = 0;
     ent.blindUntil = 0; ent.flashedBy = 0; ent.dmgBy = new Map(); ent.hitTok = 0;
     if (ent.ai) Object.assign(ent.ai, { path: null, stuck: 0, enemy: 0, threat: 0, shots: 0, nextShot: 0, ammo: {}, reloadUntil: 0, blindUntil: 0 });
   }
@@ -474,7 +483,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     if (w.recoil.type === 'kickback') { const pt = w.recoil.pts[Math.min(ai.shots - 1, w.recoil.pts.length - 1)]; pu = [pt[0] * 0.5, pt[1] * 0.5]; }
     else if (w.recoil.type === 'punch') pu = [Math.min(ai.shots * w.recoil.pitch * 0.3, 4), 0];
     bot_ducked = p.ducked;
-    const spread = botSpread(w, ai.shots, Math.hypot(p.v[0], p.v[1]) > 140, !p.onGround) + 0.075;
+    const spread = botSpread(w, ai.shots, Math.hypot(p.v[0], p.v[1]) > 140, !p.onGround) + difficulty.spread;
     const yaw = p.yaw + (pu[1] * Math.PI) / 180, pitch = p.pitch + (pu[0] * Math.PI) / 180, cp = Math.cos(pitch), eye = p.eye;
     const fwd = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)], right = [Math.sin(yaw), -Math.cos(yaw), 0], up = [-Math.sin(pitch) * Math.cos(yaw), -Math.sin(pitch) * Math.sin(yaw), Math.cos(pitch)];
     let to = null, hitAny = false;
@@ -500,7 +509,7 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       const seen = spot(bot, now);
       if (seen && seen !== ai.enemy) { // new target: react, with an aim error that settles
         const surprised = ai.threat === seen; // we were shot by them: no time to settle, and less precise
-        ai.react = now + (surprised ? 0.8 : 1.0) + Math.random() * 0.4;
+        ai.react = now + (surprised ? difficulty.surprise : difficulty.reaction) + Math.random() * difficulty.jitter;
         ai.err = [(Math.random() - 0.5) * (surprised ? 0.3 : 0.22), (Math.random() - 0.5) * 0.09];
         ai.head = false; ai.shots = 0; // Easy bots aim at the torso; stray shots may still hit the head.
       }
@@ -592,6 +601,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   // ---------- player actions ----------
   function setWeapon(ent, w, silent) {
     if (!WEAPONS[w] || !ent.owned.has(w) || ent.weapon === w) return;
+    if (ent.ammo[ent.weapon]) delete ent.ammo[ent.weapon].reload;
+    if (WEAPONS[w].mag) ent.ammo[w] ??= freshAmmo(w);
     ent.weapon = w; ent.p.maxSpeed = WEAPONS[w].speed;
     if (!silent) emit({ e: 'deploy', id: ent.id, o: ent.p.o.map(r2), w });
   }
@@ -612,7 +623,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     else if (w.grenade) { if (!canCarryGrenade(ent.gr, item)) return; ent.gr[item] = (ent.gr[item] ?? 0) + 1; ent.owned.add(item); }
     else {
       if (ent.owned.has(item)) return;
-      for (const o of [...ent.owned]) if (WEAPONS[o].slot === w.slot) ent.owned.delete(o); // replaces the slot's weapon
+      for (const o of [...ent.owned]) if (WEAPONS[o].slot === w.slot) { ent.owned.delete(o); delete ent.ammo[o]; if (ent.ai) delete ent.ai.ammo[o]; } // replaces the slot's weapon
+      ent.ammo[item] = freshAmmo(item);
       ent.owned.add(item); ent.weapon = ''; setWeapon(ent, item);
     }
     ent.money -= buyable.price;
@@ -707,11 +719,12 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   }
   function fired(ent, m) { // a shot: rate of fire is a token bucket at the weapon's cycle (3 shots of slack for network bunching)
     const w = WEAPONS[m.w];
-    if (!ent.alive || !ent.owned.has(m.w) || !w || w.grenade || w.c4) return;
+    if (!ent.alive || ent.weapon !== m.w || !ent.owned.has(m.w) || !w || w.grenade || w.c4 || round.phase !== 'live') return;
     const t = now();
     if (w.projectile) {
       if (ent.weapon !== m.w || round.phase !== 'live' || t < (ent.rocketAt ?? 0)) return;
-      ent.rocketAt = t + w.reload;
+      if (!ent.bot && !consumeAmmo(ent.ammo, m.w, t)) return;
+      ent.rocketAt = t + w.cycle;
       const { eye, yaw, pitch } = ent.p, cp = Math.cos(pitch);
       const direction = [cp * Math.cos(yaw), cp * Math.sin(yaw), Math.sin(pitch)];
       grenades.push({ id: nextGrenade++, w: m.w, owner: ent.id, attacker: ent, team: ent.team, o: [...eye], direction, age: 0 });
@@ -730,16 +743,16 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     }
     ent.fireTok = Math.min((ent.fireTok ?? 3) + (t - (ent.fireAt ?? t)) / (w.cycle * 0.9), 3); ent.fireAt = t;
     if (ent.fireTok < 1) return; // faster than the gun can fire: dropped
+    if (!ent.bot && !consumeAmmo(ent.ammo, m.w, t)) return;
     ent.fireTok -= 1; ent.firedW = m.w; ent.hitUntil = t + 0.5; ent.hitTok = w.pellets ?? 1; // a shot's hits follow it in order: no banking across shots
     ent.firedUnscoped = !!(w.scope && m.sc === 0);
-    // shortcut: ammo is not tracked server-side (the bucket bounds the damage rate); add per-weapon mags if reload cheats matter
     const to = isVec(m.to) && Math.hypot(m.to[0] - ent.p.o[0], m.to[1] - ent.p.o[1], m.to[2] - ent.p.o[2]) < 8300 ? m.to : null; // visuals: tracer end
     emit({ e: 'shot', id: ent.id, o: ent.p.o.map(r2), w: m.w, to });
     if (to && movers.defs.length) { const e = ent.p.eye, l = Math.hypot(to[0] - e[0], to[1] - e[1], to[2] - e[2]) || 1; damageMovers(e, to.map((v, k) => v + ((v - e[k]) / l) * 8), w.damage * (w.pellets ?? 1)); } // a little past the end: a bullet stopped by the pane ends on its surface
   }
   function hit(shooter, m) {
     const target = ents.get(m.target), w = WEAPONS[m.w];
-    if (!target || !w || !shooter.alive || !target.alive || target.team === shooter.team || !shooter.owned.has(m.w) || w.grenade || w.projectile) return;
+    if (round.phase !== 'live' || shooter.weapon !== m.w || !target || !w || !shooter.alive || !target.alive || target.team === shooter.team || !shooter.owned.has(m.w) || w.grenade || w.projectile) return;
     const t = now();
     if (w.melee) { if (t - (shooter.knifeAt ?? -9) < 0.3) return; shooter.knifeAt = t; } // swing rate
     else { if (shooter.firedW !== m.w || !(shooter.hitTok >= 1) || t > shooter.hitUntil) return; shooter.hitTok--; } // hits arrive right after their shot
@@ -873,7 +886,10 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       o = r.end;
     }
     const pos = floorBelow(o);
-    drops.push({ id: nextDropId++, w: wKey, o: pos, yaw: ent.p.yaw ?? 0, grace: toss ? 0.9 : 0 });
+    const sourceAmmo = ent.ai?.ammo[wKey] ?? ent.ammo[wKey];
+    const ammunition = sourceAmmo ? { mag: sourceAmmo.mag, reserve: sourceAmmo.reserve } : undefined;
+    delete ent.ammo[wKey];
+    drops.push({ id: nextDropId++, ammo: ammunition, w: wKey, o: pos, yaw: ent.p.yaw ?? 0, grace: toss ? 0.9 : 0 });
     if (ent.weapon === wKey) {
       const next = [...ent.owned].sort((a, b) => WEAPONS[a].slot - WEAPONS[b].slot)[0] ?? 'knife';
       ent.weapon = ''; setWeapon(ent, next, true);
@@ -893,6 +909,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const [d] = drops.splice(bestIdx, 1), slot = WEAPONS[d.w].slot;
     const old = [...ent.owned].find((k) => WEAPONS[k]?.slot === slot);
     if (old) dropWeapon(ent, old, false);
+    ent.ammo[d.w] = d.ammo ?? freshAmmo(d.w);
+    if (ent.ai) ent.ai.ammo[d.w] = { ...ent.ammo[d.w] };
     ent.owned.add(d.w); ent.weapon = ''; setWeapon(ent, d.w);
     emit({ e: 'itempickup', id: ent.id, item: d.w, o: d.o.map(r2) });
     return true;
@@ -905,6 +923,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       for (const e of ents.values()) {
         if (!e.alive || e.hostage || [...e.owned].some((k) => WEAPONS[k]?.slot === slot)) continue;
         if (Math.hypot(e.p.o[0] - d.o[0], e.p.o[1] - d.o[1]) < 40 && Math.abs(e.p.o[2] - d.o[2]) < 64) {
+          e.ammo[d.w] = d.ammo ?? freshAmmo(d.w);
+          if (e.ai) e.ai.ammo[d.w] = { ...e.ammo[d.w] };
           e.owned.add(d.w);
           if (slot === 1 || (e.bot && WEAPONS[d.w].price > (WEAPONS[e.weapon]?.price ?? 0))) { e.weapon = ''; setWeapon(e, d.w); }
           emit({ e: 'itempickup', id: e.id, item: d.w, o: d.o.map(r2) });
@@ -1008,21 +1028,35 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
 
   // ---------- network ----------
   function connect(ws) { // false = full (maxPlayers humans; default: humans fill both teams)
-    if (humans().length >= (maxPlayers ?? teamSize * 2)) return false;
     let ent = null;
     const send = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
     ws.on('message', (raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
+      if (!m || typeof m !== 'object') return;
       if (m.t === 'join' && !ent) {
+        const previous = typeof m.resume === 'string' && [...ents.values()].find((e) => !e.bot && e.resumeToken === m.resume && (e.disconnectedAt === null || performance.now() - e.disconnectedAt < reconnectGrace * 1000));
+        if (previous) {
+          const old = previous.ws; ent = previous; ent.ws = ws; ent.disconnectedAt = null; ent.queue.length = 0;
+          old?.close(4002, 'session resumed elsewhere');
+          send({ t: 'welcome', id: ent.id, tickRate: TICK_RATE, snapshotRate, resume: ent.resumeToken, resumed: true, team: ent.team });
+          return;
+        }
+        if (humans().length >= (maxPlayers ?? teamSize * 2)) { ws.close(1013, 'server full'); return; }
         const count = (t) => [...ents.values()].filter((e) => e.team === t && !e.bot).length;
         const auto = count('ct') <= count('t') ? 'ct' : 't', team = m.team === 'spec' ? 'spec' : (m.team === 'ct' || m.team === 't') && count(m.team) <= count(other(m.team)) ? m.team : auto; // never onto the bigger team; the menu joins as a spectator
         ent = addEntity({ team, name: String(m.name || 'Player').slice(0, 24).replace(/[<>&]/g, ''), bot: false, ws });
         fillBots(); // a bot of that team makes room for the human
-        send({ t: 'welcome', id: ent.id, tickRate: TICK_RATE, team });
+        send({ t: 'welcome', id: ent.id, tickRate: TICK_RATE, snapshotRate, resume: ent.resumeToken, resumed: false, team });
       } else if (!ent) return;
+      else if (ent.ws !== ws) return;
+      else if ((['fire', 'reload', 'weapon'].includes(m.t)) && (!Number.isInteger(m.aq) || m.aq > ent.ammoAck)) {
+        if (Number.isInteger(m.aq)) ent.ammoAck = m.aq;
+        if (m.t === 'fire') fired(ent, m);
+        else if (m.t === 'weapon') setWeapon(ent, m.w);
+        else if (ent.alive && ent.weapon === m.w && ent.owned.has(m.w)) reloadAmmo(ent.ammo, m.w, now());
+      }
+      else if (['fire', 'reload', 'weapon'].includes(m.t)) return;
       else if (m.t === 'cmd') { if (ent.queue.length < 64) ent.queue.push(m); } // run at the tick rate (see tick()), so jittery networks still move smoothly
-      else if (m.t === 'weapon') setWeapon(ent, m.w);
-      else if (m.t === 'fire') fired(ent, m);
       else if (m.t === 'hit') hit(ent, m);
       else if (m.t === 'throw') throwGrenade(ent, m);
       else if (m.t === 'buy') buy(ent, m.item);
@@ -1056,16 +1090,26 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
       }
     });
     let pingAt = 0; // latency for the scoreboard: a WebSocket ping every second, timed to its pong
-    const pinger = setInterval(() => { if (ws.readyState === 1) { pingAt = performance.now(); ws.ping(); } }, 1000);
-    ws.on('pong', () => { if (ent) ent.ping = performance.now() - pingAt; });
-    ws.on('close', () => { clearInterval(pinger); if (ent) { if (bomb.carrier === ent.id) dropBomb(ent); ents.delete(ent.id); fillBots(); } });
+    let pongAt = performance.now();
+    const pinger = setInterval(() => { if (ws.readyState === 1) {
+      if (performance.now() - pongAt > 10000) { if (ws.terminate) ws.terminate(); else ws.close?.(); return; }
+      pingAt = performance.now(); ws.ping();
+    } }, 1000);
+    connections.set(ws, pinger);
+    ws.on('pong', () => { pongAt = performance.now(); if (ent) ent.ping = pongAt - pingAt; });
+    ws.on('close', (code) => { clearInterval(pinger); connections.delete(ws); if (ent && ent.ws === ws) {
+      if (bomb.carrier === ent.id) dropBomb(ent);
+      ent.ws = null; ent.queue.length = 0; ent.planting = ent.defusing = null;
+      if (bomb.defuser === ent.id) bomb.defuser = 0;
+      if (code === 4001 || code === 4000 || code === 1000) { ents.delete(ent.id); fillBots(); }
+      else ent.disconnectedAt = performance.now();
+    } });
     ws.on('error', () => {});
     return true;
   }
 
   const P_FIELDS = ['onGround', 'ducked', 'ducking', 'ducktime', 'stamina', 'oldJump', 'oldDuck', 'eyeZ', 'velMod', 'onLadder', 'ladderCooldown', 'ladderNormal'];
   function snapshot() {
-    record();
     const list = [...ents.values()].filter((e) => e.team !== 'spec').map((e) => ({
       id: e.id, team: e.team, bot: e.bot ? 1 : 0, name: e.name, o: e.p.o.map(r2), yaw: r2(e.p.yaw), pt: r2(e.p.pitch), v: [r2(e.p.v[0]), r2(e.p.v[1])], m: e.money,
       ar: e.armor > 0 ? 1 : 0, hm: e.helmet ? 1 : 0, duck: e.p.ducked ? 1 : 0, cr: e.p.oldDuck || e.p.ducked ? 1 : 0, alive: e.alive ? 1 : 0, hp: Math.round(e.health), w: e.weapon, g: e.p.onGround ? 1 : 0, k: e.kills, dt: e.deaths, pg: e.bot ? 0 : Math.round(e.ping),
@@ -1077,11 +1121,15 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     const drp = drops.map((d) => ({ id: d.id, w: d.w, o: d.o.map(r2), yaw: r2(d.yaw) }));
     for (const e of ents.values()) {
       if (!e.ws) continue;
-      const you = { id: e.id, yaw: e.p.yaw, ack: e.lastSeq, team: e.team, money: e.money, armor: Math.round(e.armor), hp: Math.round(e.health), alive: e.alive ? 1 : 0, owned: [...e.owned], gr: e.gr, weapon: e.weapon, o: e.p.o, v: e.p.v, kit: e.kit ? 1 : 0, helmet: e.helmet ? 1 : 0, inSite: e.team === 't' && inSite(e.p.o) ? 1 : 0 };
+      const you = { ammo: e.ammo, ammoAck: e.ammoAck, id: e.id, yaw: e.p.yaw, ack: e.lastSeq, team: e.team, money: e.money, armor: Math.round(e.armor), hp: Math.round(e.health), alive: e.alive ? 1 : 0, owned: [...e.owned], gr: e.gr, weapon: e.weapon, o: e.p.o, v: e.p.v, kit: e.kit ? 1 : 0, helmet: e.helmet ? 1 : 0, inSite: e.team === 't' && inSite(e.p.o) ? 1 : 0 };
       const act = e.planting ?? e.defusing; // progress bar
       you.act = act ? { k: e.planting ? 'plant' : 'defuse', p: r2((now() - act.start) / (act.end - act.start)), len: r2(act.end - act.start) } : null;
       for (const f of P_FIELDS) you[f] = e.p[f];
-      if (e.ws.readyState === 1) e.ws.send(JSON.stringify({ t: 'snap', tick: tickNo, ents: list, you, round: rd, ev: events, gr, smokes: smk, fires: flames, drops: drp, bomb: bm, mv: movers.defs.length ? Array.from(movers.state, r2) : undefined }));
+      if (e.ws.readyState !== 1) continue;
+      e.backlog.push(...events); if (e.backlog.length > 512) e.backlog.splice(0, e.backlog.length - 512);
+      if ((e.ws.bufferedAmount ?? 0) > 256 * 1024) continue;
+      e.ws.send(JSON.stringify({ t: 'snap', tick: tickNo, ents: list, you, round: rd, ev: e.backlog, gr, smokes: smk, fires: flames, drops: drp, bomb: bm, mv: movers.defs.length ? Array.from(movers.state, r2) : undefined }));
+      e.backlog = [];
     }
   }
 
@@ -1089,8 +1137,11 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   let last = performance.now(), acc = 0, running = true, ticksRun = 0, started = performance.now();
   function tick() {
     for (const e of ents.values()) {
+      if (e.disconnectedAt !== null && performance.now() - e.disconnectedAt >= reconnectGrace * 1000) { ents.delete(e.id); fillBots(); continue; }
+      for (const k of Object.keys(e.ammo)) advanceAmmo(e.ammo, k, now());
       if (e.hostage) hostageThink(e);
       else if (e.bot) think(e);
+      else if (!e.ws && e.alive) simulate(e, { fwd: 0, side: 0 });
       else if (e.queue.length) { // one usercmd per tick; a backlog (network hiccup) drains a little faster
         const n = e.queue.length > 8 ? 3 : e.queue.length > 3 ? 2 : 1;
         for (let i = 0; i < n && e.queue.length; i++) processCmd(e, e.queue.shift());
@@ -1103,7 +1154,8 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
     updateDrops();
     updateRound();
     tickNo++; ticksRun++;
-    snapshot(); events = [];
+    record();
+    if (tickNo % snapshotEvery === 0) { snapshot(); events = []; }
   }
   const timer = setInterval(() => {
     const now = performance.now(); acc += Math.min((now - last) / 1000, 0.25); last = now;
@@ -1115,9 +1167,13 @@ export function createGame({ mapDir, teamSize: teamSizeOption = null, bombTimer 
   return {
     // admin: the people on the server, and kicking one (closed with 4001; their client says so instead of reconnecting)
     players: () => [...ents.values()].filter((e) => !e.bot).map((e) => ({ id: e.id, name: e.name, team: e.team, ping: Math.round(e.ping), kills: e.kills })),
-    kick(id) { const e = ents.get(id); if (!e || e.bot) return false; e.ws?.close(4001, 'kicked'); return true; },
-    bots: botsOn,
+    kick(id) {
+      const e = ents.get(id); if (!e || e.bot) return false;
+      e.resumeToken = null; if (bomb.carrier === id) dropBomb(e);
+      ents.delete(id); fillBots(); e.ws?.close(4001, 'kicked'); return true;
+    },
+    bots: botsOn, botDifficulty, snapshotRate,
     connect, ents, round, tick: () => tickNo, range, hostageMode, rescueZones, teamSize, maxPlayers: maxPlayers ?? teamSize * 2, bomb, drops, smokes, inSite, sites, stats: () => ({ tickRate: TICK_RATE, ticks: ticksRun, measuredHz: ticksRun / ((performance.now() - started) / 1000), entities: ents.size, humans: humans().length }),
-    stop() { running = false; clearInterval(timer); },
+    stop() { running = false; clearInterval(timer); for (const [ws, pingTimer] of connections) { clearInterval(pingTimer); ws.close?.(4000, 'server stopped'); } connections.clear(); },
   };
 }

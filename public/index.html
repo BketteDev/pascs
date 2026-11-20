@@ -288,10 +288,30 @@
   }
   body.inmenu :is(#chat-log, #chat-box) { display: none !important; }
 </style>
+<style>
+#loading { gap: 12px; padding: 20px; box-sizing: border-box; text-align: center; }
+#loadstatus { margin: 0; max-width: min(90vw, 560px); overflow-wrap: anywhere; font: 14px/1.5 Verdana, sans-serif; color: #ddd; }
+#loadelapsed { margin: 0; color: #aaa; font-size: 12px; }
+#loadretry { cursor: pointer; padding: 10px 18px; border: 1px solid #aa8446; background: #29251e; color: #ffd27a; border-radius: 4px; }
+#loading.failed #loadstatus { color: #ffb5a9; }
+.mm-win[hidden] { display: none; }
+.mm-items { bottom: 4%; overflow-y: auto; }
+.mm-item { flex-shrink: 0; }
+.vg-guide { line-height: 1.7; }
+.vg-guide p { margin: 0 0 10px; }
+.vg-guide kbd { padding: 2px 5px; background: #30372b; border: 1px solid #889180; border-radius: 3px; }
+.touch-editor { position: fixed; inset: 0; background: #111d; z-index: 60; touch-action: none; font: 13px Verdana, sans-serif; }
+.touch-editor .editor-toolbar { position: absolute; top: env(safe-area-inset-top, 0px); left: 0; right: 0; padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; z-index: 2; background: #252a22; color: #fff; }
+.touch-editor button { padding: 10px; background: #4c5844; color: #fff; border: 1px solid #889180; touch-action: none; }
+.touch-editor .layout-target { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; width: 66px; height: 66px; padding: 2px; font-size: 11px; }
+</style>
 <link rel="stylesheet" href="ui/go-hud.css">
 <div id="loading">
   <span class="agent">-</span><!-- the agent glyph of the CS logo font (cslogo.ttf) -->
-  <div class="bar"><div id="loadfill"></div></div>
+  <div class="bar" role="progressbar" aria-label="Loading"><div id="loadfill"></div></div>
+  <p id="loadstatus" role="status" aria-live="polite">Connecting to the server…</p>
+  <p id="loadelapsed"></p>
+  <button id="loadretry" type="button">Réessayer / Retry</button>
 </div>
 <div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="devpanel"></div><div id="debugout"></div><div id="scope"><div class="box"><i class="arc tl"></i><i class="arc tr"></i><i class="arc bl"></i><i class="arc br"></i></div></div>
 <canvas id="radar"></canvas>
@@ -302,11 +322,28 @@
 <div class="hudfont" id="money"></div><span id="c4icon" class="glyph">d</span><div id="actbar"><div id="acttext"></div><div class="track"><div id="actfill"></div></div></div><div id="wsel"></div><div id="buymenu"></div><div id="flash"></div><div class="dmg" id="dmg-top"></div><div class="dmg" id="dmg-bottom"></div><div class="dmg" id="dmg-left"></div><div class="dmg" id="dmg-right"></div><div id="notice"></div><div id="scoreboard"></div><div id="netwarn"></div><div id="deathmsg"></div><div id="hurt"></div><div id="info"></div>
 <script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
 <script type="module">
-  // the server decides the map (server.config.json); ask which one, then start the game
-  const info = await fetch('/api/info').then((r) => r.json()).catch(() => ({ map: 'de_dust2' }));
+  const loading = document.getElementById('loading'), status = document.getElementById('loadstatus');
+  const started = performance.now();
+  const timer = setInterval(() => {
+    if (!loading.isConnected || loading.style.opacity === '0') { clearInterval(timer); return; }
+    document.getElementById('loadelapsed').textContent = `${Math.floor((performance.now() - started) / 1000)} s`;
+  }, 1000);
+  document.getElementById('loadretry').onclick = () => location.reload();
+  const fail = (error) => {
+    if (!loading.isConnected || loading.style.opacity === '0') return;
+    clearInterval(timer); loading.classList.add('failed');
+    status.textContent = 'Chargement impossible : ' + (error?.message ?? String(error));
+  };
+  addEventListener('unhandledrejection', (e) => fail(e.reason));
+  addEventListener('error', (e) => { if (e.message) fail(new Error(e.message)); });
+  try {
+  const response = await fetch('/api/info', { signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error(`Server unavailable (HTTP ${response.status})`);
+  const info = await response.json();
   window.__map = info.map; window.__mode = info.mode;
   // your name (remembered; the main menu asks for it on the first JOIN GAME, Options > Multiplayer changes it)
   let saved = ''; try { saved = localStorage.getItem('playerName') ?? ''; } catch {}
   window.__name = saved || 'Player';
-  import('./game.js');
+  await import('./game.js');
+  } catch (error) { fail(error); }
 </script>

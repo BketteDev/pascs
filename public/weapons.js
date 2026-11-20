@@ -427,31 +427,49 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   }
   vms[s.cur].group.visible = true; playAct(s.cur, 'ACT_VM_DRAW'); s.deployEnd = now() + def().deploy; applySpeed(); hudUpdate();
   // loadout pushed by the server after buys / respawns: new weapons come with full ammo, lost ones are dropped
-  function setLoadout(list, current) {
+  function setLoadout(list, current, force = false) {
     const next = new Set(list);
     let gained = false;
     for (const k of next) if (!owned.has(k)) { gained = true; ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve }; loadVm(k); }
     owned = next; if (gained) showList();
     if (!owned.has(s.cur)) select(current && owned.has(current) ? current : owned.has(s.last) ? s.last : bySlot(2) ?? 'knife');
-    else if (gained && current && current !== s.cur && owned.has(current)) select(current); // a purchase / pickup switches to the new weapon
+    else if ((gained || force) && current && current !== s.cur && owned.has(current)) select(current); // a purchase / pickup switches to the new weapon
+  }
+
+  function syncAmmo(serverAmmo, ack = 0) {
+    if (!serverAmmo) return;
+    for (const [key, value] of Object.entries(serverAmmo)) {
+      if (!ammo[key]) continue;
+      const outstanding = (net.ammoShots ?? []).filter((shot) => shot.seq > ack && shot.w === key).length;
+      ammo[key].mag = Math.max(0, value.mag - outstanding);
+      ammo[key].reserve = value.reserve;
+    }
+    if (s.reload && ack >= s.reload.aq && !serverAmmo[s.cur]?.reload) s.reload = null;
+    if (!s.reload && serverAmmo[s.cur]?.reload && !(net.ammoShots ?? []).some((shot) => shot.seq > ack && shot.w === s.cur)) {
+      const t = now();
+      s.reload = def().shell ? { aq: ack, shell: true, next: t + def().shell, end: 0 } : { aq: ack, start: t, end: Infinity, played: 100 };
+      playAct(s.cur, 'ACT_VM_RELOAD');
+    }
+    hudUpdate();
   }
 
   function startReload() {
     const d = def(), a = ammo[s.cur], t = now();
     if (!d.mag || s.reload || a.mag >= d.mag || a.reserve <= 0 || t < s.deployEnd) return;
+    if (!alive() || !net.connected || !net.send({ t: 'reload', w: s.cur })) return;
     setZoom(0); s.resumeZoom = 0;
-    if (d.shell) { s.reload = { shell: true, next: t + d.reload, end: 0 }; playAct(s.cur, 'ACT_SHOTGUN_RELOAD_START', 'ACT_VM_RELOAD'); return; }
-    s.reload = { start: t, end: t + d.reload, played: 0 };
+    if (d.shell) { s.reload = { aq: net.actionSeq, shell: true, next: t + d.reload, end: 0 }; playAct(s.cur, 'ACT_SHOTGUN_RELOAD_START', 'ACT_VM_RELOAD'); return; }
+    s.reload = { aq: net.actionSeq, start: t, end: t + d.reload, played: 0 };
     playAct(s.cur, 'ACT_VM_RELOAD');
   }
   function finishReload() {
-    const d = def(), a = ammo[s.cur], take = Math.min(d.mag - a.mag, a.reserve);
-    a.mag += take; a.reserve -= take; s.reload = null; hudUpdate();
+    // Completion comes from an acknowledged server snapshot, including any network delay.
+    hudUpdate();
   }
   function shellReload(t, d, a) { // one shell per d.shell seconds, then the pump
     const r = s.reload;
     if (!r.end && t >= r.next) {
-      a.mag++; a.reserve--; hudUpdate(); play(d.sounds.shellSound, 0.6); r.next = t + d.shell;
+      hudUpdate(); play(d.sounds.shellSound, 0.6); r.next = t + d.shell;
       if (a.mag >= d.mag || a.reserve <= 0) { r.end = t + d.shell; playAct(s.cur, 'ACT_SHOTGUN_RELOAD_FINISH', 'ACT_VM_IDLE'); } else playAct(s.cur, 'ACT_VM_RELOAD');
     } else if (r.end && t >= r.end) { s.reload = null; if (d.sounds.pump) play(d.sounds.pump, 0.6); }
   }
@@ -668,6 +686,7 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
   // The firing decision: called on the mouse click itself (no waiting for the next frame) and every frame. Several shots may be due in
   // one call when the frame rate is lower than the fire rate, so the gun keeps its exact rhythm at any fps.
   function trigger(t) {
+    if (!alive() || !canFire() || uiOpen()) { s.held = s.wasHeld = false; s.burstLeft = 0; return; }
     const d = def(), a = ammo[s.cur];
     if (d.grenade || d.c4) { s.wasHeld = s.held; return; }
     while (s.burstLeft > 0 && t >= s.burstNext) { if (a.mag <= 0) { s.burstLeft = 0; break; } s.burstLeft--; s.burstNext += d.burst.gap; fire(false, true); }
@@ -795,5 +814,5 @@ export async function createWeapons({ loadTex, player, world, bulletLimit, surfO
     for (const k of owned) ammo[k] = { mag: WEAPONS[k].mag, reserve: WEAPONS[k].reserve };
     s.reload = null; s.pin = null; s.throwing = null; s.emptyClicked = false; hudUpdate();
   }
-  return { debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, refreshCosmetic, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned, primaryDown, primaryUp, secondaryDown, secondaryUp, reload: startReload, drop, inspect, canReload, hasAlt, isZoomed: () => s.zoom };
+  return { syncAmmo, debug, update, render, setSpectate, spectatorFire, punch: () => s.punch, fov, select, setLoadout, refill, refreshCosmetic, state: s, ammo, holes, addHole, clearHoles, shatter, owned: () => owned, primaryDown, primaryUp, secondaryDown, secondaryUp, reload: startReload, drop, inspect, canReload, hasAlt, isZoomed: () => s.zoom };
 }

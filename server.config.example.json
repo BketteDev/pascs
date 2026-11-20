@@ -2,5 +2,7 @@
   "port": 6767,
   "map": "de_dust2",
   "teamSize": 5,
-  "adminPassword": "change-me"
+  "adminPassword": "change-me",
+  "botDifficulty": "easy",
+  "snapshotRate": 32
 }

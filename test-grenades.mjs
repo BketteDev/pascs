@@ -110,7 +110,7 @@ try {
   game = createGame({ mapDir, bots: false, botsFight: false, teamSize: 2 });
   function client(team) {
     const ws = new EventEmitter(), c = { events: [], last: null, id: 0 };
-    ws.readyState = 1; ws.ping = () => ws.emit('pong');
+    ws.readyState = 1; ws.close = (code) => { ws.readyState = 3; ws.emit('close', code); }; ws.ping = () => ws.emit('pong');
     ws.send = (raw) => { const d = JSON.parse(raw); if (d.t === 'welcome') c.id = d.id; else { c.last = d; c.events.push(...d.ev); } };
     c.send = (m) => ws.emit('message', JSON.stringify(m));
     game.connect(ws); c.send({ t: 'join', name: team, team }); sockets.push(ws); return c;
@@ -127,7 +127,7 @@ try {
   assert(thrower.owned.has('rocket') && thrower.weapon === 'rocket', 'RPG is buyable as a primary weapon');
   assert.equal(thrower.gr.rocket, undefined, 'RPG does not consume grenade capacity');
   t.send({ t: 'weapon', w: 'knife' });
-  t.send({ t: 'fire', w: 'rocket' }); advance(0.02);
+  t.send({ t: 'fire', w: 'rocket' }); advance(0.04);
   assert.equal(t.last.gr.filter((g) => g.w === 'rocket').length, 0, 'RPG must be equipped');
   t.send({ t: 'weapon', w: 'rocket' });
   Object.assign(thrower.p, { o: [0, 0, 1], yaw: 0, pitch: -0.065 });
@@ -142,10 +142,11 @@ try {
   assert(t.events.some((e) => e.e === 'death' && e.w === 'rocket' && e.killer === thrower.id));
   assert.equal(friendly.health, 100, 'no friendly rocket damage');
   thrower.p.pitch = 1.3; t.events.length = 0;
-  t.send({ t: 'fire', w: 'rocket' }); advance(0.02);
+  t.send({ t: 'fire', w: 'rocket' }); advance(0.04);
   assert.equal(t.events.filter((e) => e.e === 'shot' && e.w === 'rocket').length, 0, 'server blocks firing before reload');
-  advance(WEAPONS.rocket.reload);
-  t.send({ t: 'fire', w: 'rocket' }); advance(0.02);
+  t.send({ t: 'reload', w: 'rocket' });
+  advance(WEAPONS.rocket.reload + 0.03);
+  t.send({ t: 'fire', w: 'rocket' }); advance(0.04);
   assert.equal(t.events.filter((e) => e.e === 'shot' && e.w === 'rocket').length, 1, 'RPG can fire again after reload');
   Object.assign(enemy, { alive: true, health: 100 });
   function throwFire() {
@@ -164,7 +165,7 @@ try {
   assert(thrower.health < ownHealth, 'self damage');
   thrower.p.o = [-500, 0, 1]; enemy.health = 1; const kills = thrower.kills;
   // Credit survives an owner disconnect: the fire keeps the original attacker, not a partial fallback.
-  sockets[0].readyState = 3; sockets[0].emit('close'); advance(0.3);
+  sockets[0].readyState = 3; sockets[0].emit('close', 1000); advance(0.3);
   assert.equal(enemy.alive, false); assert.equal(thrower.kills, kills + 1);
   assert(ct.events.some((e) => e.e === 'death' && e.w === 'molotov' && e.killer === thrower.id), 'kill feed attributes fire kills');
   advance(GRENADE.fireTime); assert.equal(ct.last.fires.length, 0, 'fire expires');
@@ -186,7 +187,7 @@ try {
   const botGame = createGame({ mapDir, bots: true, botsFight: true, teamSize: 2 });
   function createClientFor(g, team) {
     const ws = new EventEmitter(), c = { events: [], last: null, id: 0 };
-    ws.readyState = 1; ws.ping = () => ws.emit('pong');
+    ws.readyState = 1; ws.close = (code) => { ws.readyState = 3; ws.emit('close', code); }; ws.ping = () => ws.emit('pong');
     ws.send = (raw) => { const d = JSON.parse(raw); if (d.t === 'welcome') c.id = d.id; else { c.last = d; c.events.push(...d.ev); } };
     c.send = (m) => ws.emit('message', JSON.stringify(m));
     g.connect(ws); c.send({ t: 'join', name: team, team }); sockets.push(ws); return c;

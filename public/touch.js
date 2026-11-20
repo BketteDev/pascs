@@ -116,6 +116,89 @@ export function createTouchControls({
     knobEl.style.transform = 'translate(0px, 0px)';
   };
 
+  // Saved independently for portrait and landscape; normalized coordinates survive resizing.
+  const layoutKey = () => innerWidth >= innerHeight ? 'touchLayoutLandscape' : 'touchLayoutPortrait';
+  let cachedLayoutKey = '', cachedLayout = {};
+  const readLayout = () => {
+    const key = layoutKey();
+    if (key === cachedLayoutKey) return cachedLayout;
+    cachedLayoutKey = key;
+    try { cachedLayout = Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem(key)) ?? {}).filter(([, pos]) => Array.isArray(pos) && pos.length === 2 && pos.every(Number.isFinite))); }
+    catch { cachedLayout = {}; }
+    return cachedLayout;
+  };
+  const buttons = [...root.querySelectorAll('.t-btn')];
+  let lastLayoutSignature = '', editor = null;
+  const clampPosition = (x, y, size = 70) => {
+    const mx = Math.min(0.45, (size / 2 + 12) / innerWidth), my = Math.min(0.45, (size / 2 + 12) / innerHeight);
+    return [Math.max(mx, Math.min(1 - mx, x)), Math.max(my, Math.min(1 - my, y))];
+  };
+  function applyLayout(layout = readLayout()) {
+    const scale = Math.max(0.75, Math.min(1.4, Number(getSettings().touchScale) || 1));
+    const signature = JSON.stringify([layout, scale, innerWidth, innerHeight]);
+    if (signature === lastLayoutSignature) return;
+    lastLayoutSignature = signature;
+    for (const button of buttons) {
+      button.style.scale = String(scale);
+      const pos = layout[button.id];
+      if (Array.isArray(pos) && pos.length === 2 && pos.every(Number.isFinite)) {
+        const [x, y] = clampPosition(pos[0], pos[1], 80 * scale);
+        Object.assign(button.style, { position: 'fixed', left: `${x * 100}%`, top: `${y * 100}%`, right: 'auto', bottom: 'auto', translate: '-50% -50%' });
+      } else {
+        for (const property of ['position', 'left', 'top', 'right', 'bottom', 'translate']) button.style[property] = '';
+      }
+    }
+  }
+  function editLayout(onClose = () => {}) {
+    if (editor) return;
+    resetInputs();
+    const originalDisplay = root.style.display;
+    root.style.display = 'block'; actionsEl.style.display = 'flex';
+    // Measure the existing CSS layout as the starting point, including currently hidden actions.
+    const previous = buttons.map((b) => b.style.display);
+    buttons.forEach((b) => { b.style.display = 'flex'; });
+    applyLayout({});
+    const defaults = Object.fromEntries(buttons.map((b) => { const r = b.getBoundingClientRect(); return [b.id, clampPosition((r.left + r.width / 2) / innerWidth, (r.top + r.height / 2) / innerHeight)]; }));
+    buttons.forEach((b, i) => { b.style.display = previous[i]; });
+    root.style.display = originalDisplay; applyLayout();
+    const key = layoutKey();
+    let draft = { ...defaults, ...readLayout() }, dragging = null;
+    editor = document.createElement('div'); editor.className = 'touch-editor';
+    editor.setAttribute('role', 'dialog'); editor.setAttribute('aria-label', 'Touch button layout');
+    editor.innerHTML = '<div class="editor-toolbar"><span>Glisse les boutons · Disposition pour cette orientation</span><button data-edit="save">Enregistrer</button><button data-edit="reset">Réinitialiser</button><button data-edit="cancel">Annuler</button></div>';
+    const paint = () => { for (const target of editor.querySelectorAll('[data-target]')) { const [x, y] = clampPosition(...draft[target.dataset.target]); target.style.left = `${x * 100}%`; target.style.top = `${y * 100}%`; } };
+    for (const b of buttons) {
+      const target = document.createElement('button'); target.className = 'layout-target'; target.dataset.target = b.id;
+      target.textContent = b.textContent; target.setAttribute('aria-label', 'Move ' + b.textContent);
+      editor.append(target);
+    }
+    const finish = (save) => {
+      if (save) try { localStorage.setItem(key, JSON.stringify(draft)); } catch {}
+      removeEventListener('orientationchange', rotated);
+      editor.remove(); editor = null; cachedLayoutKey = ''; lastLayoutSignature = ''; applyLayout(); onClose();
+    };
+    editor.addEventListener('pointerdown', (e) => {
+      const target = e.target.closest('[data-target]'); if (!target) return;
+      dragging = target; target.setPointerCapture(e.pointerId); e.preventDefault();
+    });
+    editor.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      draft[dragging.dataset.target] = clampPosition(e.clientX / innerWidth, e.clientY / innerHeight); paint(); e.preventDefault();
+    });
+    editor.addEventListener('pointerup', () => { dragging = null; });
+    editor.addEventListener('pointercancel', () => { dragging = null; });
+    editor.addEventListener('click', (e) => {
+      const action = e.target.dataset.edit;
+      if (action === 'save') finish(true);
+      else if (action === 'cancel') finish(false);
+      else if (action === 'reset') { draft = { ...defaults }; paint(); }
+    });
+    // Rotation closes without saving rather than accidentally writing landscape positions to portrait.
+    const rotated = () => { if (editor) finish(false); removeEventListener('orientationchange', rotated); };
+    addEventListener('orientationchange', rotated, { once: true });
+    document.body.append(editor); paint();
+  }
+
   // ---------- movement joystick ----------
   const JOY_MAX = 46;
   const updateJoy = (x, y) => {
@@ -296,6 +379,7 @@ export function createTouchControls({
   let lastWasUi = false;
 
   function update() {
+    if (editor) { root.style.display = 'none'; return; }
     const enabled = isEnabled();
     document.body.classList.toggle('touch-mode', enabled);
     if (!enabled) {
@@ -304,6 +388,7 @@ export function createTouchControls({
       return;
     }
 
+    applyLayout();
     const active = isActive();
     if (!active && lastWasUi !== true) resetInputs();
     lastWasUi = !active;
@@ -379,6 +464,8 @@ export function createTouchControls({
   return {
     isEnabled,
     isActive,
+    isEditing: () => !!editor,
+    editLayout,
     getMove: () => ({ f: joy.f, s: joy.s, j: jumpPulse ? 1 : 0, d: duckToggle ? 1 : 0, w: joy.w }),
     reset: resetInputs,
     update,

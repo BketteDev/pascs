@@ -50,7 +50,7 @@ Weaker PCs: Options > Video > Render scale and Low texture quality.
 
 `zip ajout a faire/mapcs.zip` is imported as **de_mirage_csgo_new**. Select it in Server Admin; the current default map stays unchanged. It includes both bombsites, collision, the embedded radar and generated bot navigation. Some decorative props depend on HL2 models absent from the local content and are omitted by the existing converter.
 
-Buy the **RPG-7 ($6000)** from **B > Heavy** on either team. It replaces the primary weapon: **1** selects it, left click fires, **R** reloads. It has one loaded rocket and four spare rounds, with a 5.1-second reload. Rockets fly straight and explode against players or geometry; walls block blast damage, teammates are protected, and the shooter can take splash damage. The launcher, missile, textures, animations, sounds and icon come from `rocket.zip`. SourceMod binaries are not used by this browser game. As with the other guns, ammunition is managed by the client; the server validates projectile ownership, firing cadence, collision and damage.
+Buy the **RPG-7 ($6000)** from **B > Heavy** on either team. It replaces the primary weapon: **1** selects it, left click fires, **R** reloads. It has one loaded rocket and four spare rounds, with a 5.1-second reload. Rockets fly straight and explode against players or geometry; walls block blast damage, teammates are protected, and the shooter can take splash damage. The launcher, missile, textures, animations, sounds and icon come from `rocket.zip`. SourceMod binaries are not used by this browser game. Ammunition and reloads are validated by the server, together with projectile ownership, firing cadence, collision and damage.
 
 To regenerate only these additions after extracting the ZIPs into `exports/asset-import/{mapcs,rocket}`, run from `web`:
 
@@ -91,3 +91,45 @@ Le RPG-7 coûte maintenant **6 000 $**, prix partagé par le menu et la validati
 L’explosion du RPG-7 existait déjà : rayon de **350 unités**, dégâts bruts de **140 × (1 − distance / 350)** avant armure, mesurés au torse. Un tir de test contre un mur blesse simultanément deux ennemis hors de sa trajectoire : **104,53 et 39,70 PV**. Le test vérifie aussi la décroissance, un ennemi derrière un mur, un ennemi hors rayon, la protection des coéquipiers et les dégâts au tireur. `node test-rockets.mjs` exécute ce scénario sur le vrai serveur avec une horloge déterministe.
 
 Pour GitHub, les géométries de Mirage et Agency dépassent 100 Mio à l’état brut. Elles sont publiées sans perte en `world.bin.gz` ; le serveur répond toujours à l’URL habituelle `world.bin`, avec décodage transparent pour les navigateurs et décompression serveur pour les clients sans gzip. `node test-static.mjs` vérifie ce chemin et le cache ETag. Les convertisseurs produisent aussi ces fichiers compressés lors des prochains builds. Les archives sources et le mot de passe local ne sont pas publiés.
+
+
+## Chargement, connexion et commandes
+
+Le chargement affiche l’étape et le temps écoulé, avec un bouton **Réessayer / Retry**. Une erreur HTTP, un modèle manquant ou une erreur de démarrage affiche un message ; les textures manquantes reçoivent une texture de secours. Les textures encore en cours après 15 secondes continuent de charger en arrière-plan.
+
+Le client réessaie automatiquement après une coupure (délai progressif de 0,5 à 5 secondes), y compris au retour d’arrière-plan. Le serveur réserve la place pendant **30 secondes** et conserve l’équipe, le score, l’argent et les armes grâce à un jeton propre à l’onglet. Le personnage reste présent et vulnérable ; la bombe est lâchée et une pose/un désamorçage en cours est interrompu. Après expiration, le joueur revient comme spectateur et peut rejoindre une équipe. Une exclusion ne déclenche pas de reconnexion. Un changement de carte recharge la page.
+
+Les chargeurs, réserves et délais de rechargement sont contrôlés par le serveur. Changer d’arme interrompt un rechargement ; les fusils à pompe chargent cartouche par cartouche et peuvent interrompre le chargement pour tirer. Une arme ramassée conserve ses munitions. Le client affiche immédiatement ses tirs et se recale sur les actions confirmées par le serveur. Les survivants sont réapprovisionnés au début de chaque manche, comme auparavant.
+
+Le menu **Guide / How to play** présente les objectifs et les commandes et s’affiche avant la première partie. **Options → Keyboard** propose AZERTY et QWERTY ainsi que les touches individuelles. Les positions physiques de déplacement restent identiques ; leurs lettres affichées suivent la disposition choisie. Le français sélectionne AZERTY par défaut si aucune préférence n’est enregistrée.
+
+Dans **Options → Touch**, régler la taille des boutons ou ouvrir **Déplacer les boutons / Edit layout**. Glisser les boutons, puis enregistrer. Annuler abandonne les changements ; réinitialiser prépare les positions d’origine. Les dispositions portrait et paysage sont enregistrées séparément. Tourner le téléphone pendant l’édition annule l’édition en cours.
+
+## Réseau et difficulté des bots
+
+La simulation reste à **128 Hz**. Par défaut, les états réseau sont envoyés à **32 Hz**, avec les événements accumulés entre deux envois et une interpolation adaptée. Un client dont la connexion est saturée ne reçoit pas une file illimitée d’anciens états ; les événements en attente sont bornés à 512. Le débit exact dépend du nombre de joueurs et des événements.
+
+**Server Admin** propose les difficultés **Facile / Normal / Difficile** (temps de réaction et dispersion) et les fréquences réseau **16 / 32 / 64 / 128 Hz**. Facile conserve les bots faciles de la version précédente. Appliquer ces réglages redémarre la partie pour tous les joueurs.
+
+Les mêmes paramètres sont disponibles dans `server.config.json` :
+
+```json
+{
+  "botDifficulty": "easy",
+  "snapshotRate": 32
+}
+```
+
+Ou via les variables `BOT_DIFFICULTY=easy|normal|hard` et `SNAPSHOT_RATE=16|32|64|128`, également exposées dans Docker Compose. Redémarrer Node après une modification du code serveur.
+
+## Vérifications sur Termux
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund
+npm run test:offline
+node test-static.mjs
+```
+
+Le sol artificiel de `test-physics.mjs` est limité à 8 192 unités de chaque côté pour éviter des millions de cellules de collision inutiles et une saturation mémoire sur téléphone. Les tests s’exécutent successivement. `test-gameplay.mjs` couvre les munitions, réserves, rechargements, armes ramassées, fréquences réseau et réservations de session avec une petite carte et une horloge déterministe. `test-net.mjs` vérifie la reconnexion du client, les confirmations d’actions et les dispositions clavier ; `test-weapons.mjs` exerce le vrai contrôleur d’armes sans GPU. `npm test` utilise aussi le véritable transport WebSocket ; le mode offline utilise un transport en mémoire.
+
+La disposition tactile et le rendu WebGL demandent encore une vérification visuelle dans le navigateur du téléphone.

@@ -30,7 +30,7 @@ const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, 'http://x'), url = decodeURIComponent(reqUrl.pathname);
   if (url === '/api/maps') { const list = builtMaps().sort(); return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(reqUrl.searchParams.has('grouped') ? { css: list.filter((m) => mapGame(m) === 'css'), csgo: list.filter((m) => mapGame(m) === 'csgo') } : list)); }
   if (url === '/api/admin' && req.method === 'POST') return admin(req, res);
-  if (url === '/api/info') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ map: config.map, game: mapGame(config.map), mode: config.mode ?? 'classic', teamSize: game.teamSize, maxPlayers: game.maxPlayers }));
+  if (url === '/api/info') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ map: config.map, game: mapGame(config.map), mode: config.mode ?? 'classic', teamSize: game.teamSize, maxPlayers: game.maxPlayers, botDifficulty: game.botDifficulty, snapshotRate: game.snapshotRate }));
   if (url === '/' || url === '/index.html') {
     if (req.headers['if-none-match'] === indexHeaders.ETag) return res.writeHead(304, indexHeaders).end();
     const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
@@ -89,19 +89,21 @@ if (process.env.PORT) config.port = Number(process.env.PORT); // environment ove
 if (process.env.MAP) config.map = process.env.MAP;
 if (process.env.TEAM_SIZE) config.teamSize = Number(process.env.TEAM_SIZE);
 if (process.env.ADMIN_PASSWORD) config.adminPassword = process.env.ADMIN_PASSWORD;
+if (process.env.BOT_DIFFICULTY) config.botDifficulty = process.env.BOT_DIFFICULTY;
+if (process.env.SNAPSHOT_RATE) config.snapshotRate = Number(process.env.SNAPSHOT_RATE);
 if (process.env.MODE) config.mode = process.env.MODE; // 'range': shooting range (target bots, no rounds)
 const CSS_MAPS = new Set(['de_dust2', 'de_inferno', 'cs_office', 'de_nuke']);
 const mapGame = (m) => CSS_MAPS.has(m) ? 'css' : 'csgo';
 const builtMaps = () => fs.readdirSync(path.join(pub, 'maps')).filter((m) => fs.existsSync(path.join(pub, 'maps', m, 'world.json')));
 if (!builtMaps().includes(config.map)) { console.error(`map "${config.map}" is not built: public/maps/${config.map}/world.json is missing (npm run build)`); process.exit(1); }
-const wss = new WebSocketServer({ server, path: '/game' });
-const newGame = () => createGame({ mapDir: path.join(pub, 'maps', config.map), teamSize: config.teamSize, maxPlayers: config.maxPlayers, bots: config.bots !== false, range: config.mode === 'range' });
+const wss = new WebSocketServer({ server, path: '/game', maxPayload: 16384 });
+const newGame = () => createGame({ mapDir: path.join(pub, 'maps', config.map), teamSize: config.teamSize, maxPlayers: config.maxPlayers, bots: config.bots !== false, range: config.mode === 'range', botDifficulty: config.botDifficulty ?? 'easy', snapshotRate: config.snapshotRate ?? 32 });
 let game = newGame();
 // map / team size / max players change: a fresh game; everyone is disconnected with code 4000 and their page reloads into it
-function restart({ map, teamSize, maxPlayers, bots }) {
+function restart({ map, teamSize, maxPlayers, bots, botDifficulty = game.botDifficulty, snapshotRate = game.snapshotRate }) {
   game.stop();
   for (const ws of wss.clients) ws.close(4000, 'map change');
-  Object.assign(config, { map, teamSize, maxPlayers, bots });
+  Object.assign(config, { map, teamSize, maxPlayers, bots, botDifficulty, snapshotRate });
   game = newGame();
   console.log(`admin: ${map}, ${game.teamSize}v${game.teamSize}, max ${game.maxPlayers} players, bots ${game.bots ? 'on' : 'off'}`);
 }
@@ -115,7 +117,7 @@ function admin(req, res) {
     let m; try { m = JSON.parse(body); } catch { return reply(400, 'bad request'); }
     if (!config.adminPassword) return reply(403, 'admin is off: set adminPassword in server.config.json');
     if (!crypto.timingSafeEqual(digest(m.password), digest(config.adminPassword))) return reply(401, 'wrong password');
-    if (m.list) return reply(200, 'ok', { players: game.players(), bots: game.bots });
+    if (m.list) return reply(200, 'ok', { players: game.players(), bots: game.bots, botDifficulty: game.botDifficulty, snapshotRate: game.snapshotRate });
     if (m.kick !== undefined) return game.kick(Number(m.kick)) ? reply(200, 'kicked') : reply(404, 'no such player');
     if (m.map === undefined) return reply(200, 'ok'); // login check only
     const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
@@ -123,6 +125,8 @@ function admin(req, res) {
     if (!int(m.teamSize, 1, 16)) return reply(400, 'team size must be 1-16');
     if (!int(m.maxPlayers, 1, 32)) return reply(400, 'max players must be 1-32');
     if (typeof m.bots !== 'boolean') return reply(400, 'bots must be on or off');
+    if (m.botDifficulty !== undefined && !['easy', 'normal', 'hard'].includes(m.botDifficulty)) return reply(400, 'unknown bot difficulty');
+    if (m.snapshotRate !== undefined && ![16, 32, 64, 128].includes(m.snapshotRate)) return reply(400, 'snapshot rate must be 16, 32, 64 or 128');
     reply(200, 'restarting...'); restart(m);
   });
 }

@@ -1,10 +1,11 @@
-// Integration test: starts the game server, connects two clients, checks the 128 Hz snapshot rate, bot movement and
+// Integration test: starts the game server, connects two clients, checks the 32 Hz snapshot rate and 128 Hz simulation, bot movement and
 // footstep events, command processing (a human walking), the buy flow and hit validation.
 import assert from 'assert';
 import path from 'path';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createGame } from './server/game.mjs';
+import { freshAmmo } from './public/ammo.js';
 import { DEFAULT_BINDS } from './public/binds.js';
 import { EventEmitter } from 'node:events';
 
@@ -36,7 +37,8 @@ const a = await client('Alice', 'ct'), b = await client('Bob', 't');
 const shoot = (c, target, group, { w = 'deagle', at = target.p.o, rt, fire = true } = {}) => {
   const eye = game.ents.get(c.id).p.eye, z = { 1: 62, 2: 45, 6: 15 }[group] * (target.p.ducked ? 0.72 : 1);
   const d = [at[0] - eye[0], at[1] - eye[1], at[2] + z - eye[2]];
-  if (fire) c.send({ t: 'fire', w });
+  // Isolate hit geometry/cadence from ammunition, covered by test-gameplay.mjs.
+  if (fire) { game.ents.get(c.id).ammo[w] = freshAmmo(w); c.send({ t: 'weapon', w }); c.send({ t: 'fire', w }); }
   c.send({ t: 'hit', target: target.id, group, bone: group === 1 ? 14 : 1, w, o: eye, d, rt });
 };
 await sleep(300);
@@ -46,7 +48,8 @@ const t0 = a.snaps, h0 = performance.now();
 await sleep(2000);
 const hz = ((a.snaps - t0) / (performance.now() - h0)) * 1000;
 console.log('snapshot rate', hz.toFixed(0), 'Hz');
-assert(hz > 115 && hz < 140, 'snapshots go out every 128 Hz tick, got ' + hz);
+assert(hz > 27 && hz < 37, 'snapshots go out at 32 Hz, got ' + hz);
+assert.equal(a.last.tick > 128, true, 'simulation continues at 128 Hz');
 const count = (team) => a.last.ents.filter((e) => e.team === team).length;
 assert.strictEqual(count('ct'), 5); assert.strictEqual(count('t'), 5);
 assert.strictEqual(a.last.ents.filter((e) => !e.bot).length, 2);
@@ -320,6 +323,8 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
     await sleep(200);
     assert(fake.last.mv.every((v) => v === 0), 'a new round closes doors and restores glass');
     assert(standBefore(movers[pane].center), 'room to knife restored window');
+    Object.assign(g6.round, { phase: 'live', left: 100 });
+    fake.handlers.message(JSON.stringify({ t: 'weapon', w: 'knife' }));
     fake.handlers.message(JSON.stringify({ t: 'fire', w: 'knife', to: movers[pane].center }));
     await sleep(100);
     assert(fake.last.mv[pane] === 1, 'knife slash broke the restored pane');
@@ -394,7 +399,7 @@ assert.strictEqual(a.last.ents.find((e) => e.id === mate.id).hp, 100, 'no friend
   { // Killfeed modifiers: blind, no-scope, airborne, through smoke and flash assist
     const alice = game.ents.get(a.id), bob = game.ents.get(b.id), mate = [...game.ents.values()].find((e) => e.team === 'ct' && e.id !== alice.id);
     const { trace } = await import('./public/physics.js');
-    alice.alive = true; alice.health = 100; alice.owned.add('awp'); alice.weapon = 'awp';
+    alice.alive = true; alice.health = 100; alice.owned.add('awp'); alice.weapon = 'awp'; alice.ammo.awp = freshAmmo('awp');
     bob.alive = true; bob.health = 100; bob.armor = 0; bob.helmet = false;
     for (const ent of [alice, bob]) Object.assign(ent.p, { ducked: false, ducking: false, eyeZ: 64, v: [0, 0, 0] });
     const origin = [...alice.p.o], zero = [0, 0, 0];

@@ -9,5 +9,7 @@ services:
       - "${PORT:-6767}:6767"
     environment:
       MAP: ${MAP:-de_dust2}
+      BOT_DIFFICULTY: ${BOT_DIFFICULTY:-easy}
+      SNAPSHOT_RATE: ${SNAPSHOT_RATE:-32}
       TEAM_SIZE: ${TEAM_SIZE:-5}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
