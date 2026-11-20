@@ -1,5 +1,5 @@
 import { deviceDefaults, isTouchDevice } from './mobile.js';
-import { selectableMaps } from './maps.js';
+import { GAMES, selectableMaps } from './maps.js';
 // The CS:S main menu: logo top left, a column of text buttons over the live game (the map behind it, the spectator camera running),
 // and the Options window in CS:S's olive VGUI style (tabs, sliders, OK / Cancel / Apply). One server only: JOIN GAME joins it.
 // Settings live in localStorage ('settings', plus 'crosshair', 'playerName', 'binds', 'adminPass') and are handed to onSettings.
@@ -214,12 +214,12 @@ export function createMainMenu({ onPlay, onQuit, onSettings, onCosmetic, onTouch
     frame('Server Admin', '<div class="vg-page"><div class="vg-row">Loading...</div></div>', [['Apply', 'apply'], ['Close', 'cancel']]);
     const [rawMaps, info, roster] = await Promise.all([fetch('/api/maps?grouped=1').then((r) => r.json()).catch(() => ({ css: [], csgo: [] })), fetch('/api/info').then((r) => r.json()).catch(() => ({})), adminPost({ password: loadAdminPass(), list: true })]);
     if (win.hidden) return;
-    const offered = Array.isArray(rawMaps) ? rawMaps : [...(rawMaps.css ?? []), ...(rawMaps.csgo ?? [])];
-    const byGame = { css: selectableMaps(offered, 'css'), csgo: selectableMaps(offered, 'csgo') };
-    const curGame = byGame.csgo.includes(info.map) ? 'csgo' : byGame.css.includes(info.map) ? 'css' : (byGame.csgo.length ? 'csgo' : 'css');
+    const offered = Array.isArray(rawMaps) ? rawMaps : Object.values(rawMaps).flat();
+    const byGame = Object.fromEntries(Object.keys(GAMES).map((g) => [g, selectableMaps(offered, g)]));
+    const curGame = Object.keys(GAMES).find((g) => byGame[g].includes(info.map)) ?? Object.keys(GAMES).find((g) => byGame[g].length) ?? 'css';
     const mapOpts = (g, sel) => (byGame[g] ?? []).map((m) => `<option${m === sel ? ' selected' : ''}>${esc(m)}</option>`).join('');
     frame('Server Admin', `<div class="vg-page">
-      <label class="vg-row">Game<select data-a="game"><option value="css"${curGame === 'css' ? ' selected' : ''}>CS:Source (${byGame.css.length})</option><option value="csgo"${curGame === 'csgo' ? ' selected' : ''}>CS:GO (${byGame.csgo.length})</option></select><span></span></label>
+      <label class="vg-row">Game<select data-a="game">${Object.entries(GAMES).map(([g, label]) => `<option value="${g}"${curGame === g ? ' selected' : ''}>${label} (${byGame[g].length})</option>`).join('')}</select><span></span></label>
       <label class="vg-row">Map<select data-a="map">${mapOpts(curGame, info.map)}</select><span></span></label>
       <label class="vg-row">Team size (bots fill)<input class="vg-text" type="number" min="1" max="16" data-a="teamSize" value="${info.teamSize ?? 5}"><span></span></label>
       <label class="vg-row">Max players<input class="vg-text" type="number" min="1" max="32" data-a="maxPlayers" value="${info.maxPlayers ?? 10}"><span></span></label>

@@ -10,6 +10,7 @@ for(const dir of fs.readdirSync(maps,{withFileTypes:true})) {
   if(!dir.isDirectory()||!fs.existsSync(worldFile))continue;
   const id=mapDetails(dir.name)?.id;
   const source=id==='de_mirage_csgo_new'?path.join(root,'exports/asset-import/mapcs/MIRAGE MAP/de_mirage_csgo_new.bsp'):
+    id==='de_split'?path.join(root,'exports/asset-import/split/de_split_d_d.vmf'):
     css.has(id)?path.join(root,'content/maps',id+'.bsp'):path.join(root,'reference/decompiled-csgo-maps',id+'_d.vmf');
   const ladders=source.endsWith('.bsp')?bspLadders(fs.readFileSync(source)):vmfLadders(fs.readFileSync(source,'latin1'));
   const world=JSON.parse(fs.readFileSync(worldFile));world.ladders=ladders;

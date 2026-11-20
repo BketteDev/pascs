@@ -80,7 +80,24 @@ const { createTeamMenu } = await import('./public/team.js');
 let picked = false;
 const team = createTeamMenu({ net: { send: (m) => sent.push(m) }, getState: () => ({ team: 'spec' }), getRoster: () => [], drawPortrait() {}, mapName: 'GO-Mirage', onPick: () => picked = true });
 team.open(); click(document.querySelector('.tm-auto')); assert(picked); assert.deepEqual(sent.at(-1), { t: 'team', team: 'ct' });
-assert.equal(MAPS.length, 12); assert.equal(new Set(MAPS.map((m) => m.directory)).size, 12);
-for (const m of MAPS) { assert.equal(mapFolder(m.id), m.directory); assert.equal(mapDetails(m.directory).id, m.id); assert(m.directory.startsWith(m.game === 'css' ? 'Source-' : 'GO-')); }
+assert.equal(MAPS.length, 13); assert.equal(new Set(MAPS.map((m) => m.directory)).size, 13);
+for (const m of MAPS) { assert.equal(mapFolder(m.id), m.directory); assert.equal(mapDetails(m.directory).id, m.id); assert(m.directory.startsWith({css:'Source-',csgo:'GO-',valorant:'Valorant-'}[m.game])); }
 assert.equal(mapFolder('../secrets'), undefined);
+storage.set('adminPass','qa');
+globalThis.fetch=async (url)=>({ok:true,json:async()=>url.startsWith('/api/maps')?
+ {css:['cs_office','Source-Office','de_split','de_dust2'],csgo:['de_mirage','GO-Mirage','de_overpass'],valorant:['Valorant-Split','de_split','de_split_d']}:
+ url==='/api/info'?{map:'Valorant-Split'}:{ok:true,players:[]}});
+const adminMenu=createMainMenu({inGame:()=>false,onPlay(){},onSettings(){},onQuit(){}});
+adminMenu.open();await new Promise(r=>setTimeout(r,0));
+const adminRoot=[...document.querySelectorAll('#mainmenu')].at(-1);
+click(adminRoot.querySelector('[data-a=admin]'));await new Promise(r=>setTimeout(r,0));
+const gameSelect=adminRoot.querySelector('[data-a=game]'),mapSelect=adminRoot.querySelector('[data-a=map]');
+assert.match(gameSelect.textContent,/Valorant \(1\)/);
+assert.equal(gameSelect.querySelector('[selected]').getAttribute('value'),'valorant');
+assert.deepEqual([...mapSelect.querySelectorAll('option')].map(o=>o.textContent),['Valorant-Split']);
+for(const [game,maps]of [['css',['Source-Office']],['csgo',['GO-Mirage']],['valorant',['Valorant-Split']]]){
+ gameSelect.onchange({target:{value:game}});
+ assert.deepEqual([...mapSelect.querySelectorAll('option')].map(o=>o.textContent),maps);
+}
+adminMenu.close();
 console.log('UI ok: mobile defaults, accessible options, native buy buttons/budget, simple controls, multi-touch release, auto reload, one-tap team, map naming/aliases');

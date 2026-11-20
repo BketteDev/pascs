@@ -167,6 +167,22 @@ Diagnostic conservé pour référence : aucune poursuite des réparations d’Ov
 
 Ces noms ont été recherchés dans le contenu local, l’archive CS:S et le VPK CS2 installé : aucun original utilisable. La distribution [officielle CS:GO sur Steam](https://store.steampowered.com/app/4465480/CounterStrike_Global_Offensive/) est une provenance à vérifier pour les ressources Source 1 ; sa présence sur Steam ne garantit pas qu’elle conserve ces variantes de 2018. La matrice de rotation de l’exporteur correspond à celle de Valve : aucune rotation arbitraire n’a été ajoutée pour masquer le mauvais remplacement de garde-corps. Le contrôle visuel effectué porte sur le chargement d’Italy dans un navigateur ; les six défauts de ressources ci-dessus restent ouverts.
 
+## Valorant : Split
+
+La catégorie **Valorant** propose `Valorant-Split`, également acceptée sous les alias `de_split`, `de_split_d` et `de_split_d_d`. Les catégories Source et CS:GO conservent leurs propres cartes ; les cinq cartes précédemment désactivées le restent. `MAP=Valorant-Split` démarre cette carte et le menu Admin permet de la choisir dans Valorant.
+
+La géométrie vient du fichier `de_split_d_d.vmf` du ZIP fourni `zip ajout a faire/de_split_vmt.zip`. Ce ZIP contient uniquement le VMF. Les ressources personnalisées viennent du BSP `de_split_ntw.bsp` de l’archive complète publiée sur la [même page d’auteur](https://gamebanana.com/mods/602270), fichier GameBanana `1463610`. Crédit : jukmifgguggh pour la carte d’origine, la06g3 pour cette modification. Les archives et le BSP restent locaux ; les fichiers convertis nécessaires sont livrés dans `public/maps/Valorant-Split`.
+
+Reconstruction avec le pipeline existant :
+
+```sh
+node tools/vmf-build.mjs ../exports/asset-import/split/de_split_d_d.vmf Valorant-Split --bsp ../exports/asset-import/split/resources/de_split_ntw.bsp
+```
+
+L’export conserve 25 apparitions CT, 32 T, deux sites, sept volumes d’échelle, le radar et le ciel 3D, avec 2 951 points de navigation. Les barrières Source `barrier1`, ouvertes par une logique temporisée propre à cette version, sont omises : le gel des joueurs en début de manche utilise le mécanisme existant du jeu. Les achats, armes et équipes restent ceux du jeu actuel ; aucun agent ou mode Valorant supplémentaire n’est introduit.
+
+Limites connues : six modèles absents (31 instances), 19 groupes de matériaux approximés par le convertisseur et dix noms d’overlays non exportés, listés dans `public/maps/Valorant-Split/import.json`. Aucun modèle n’a été substitué. Le rendu utilise l’éclairage simplifié du pipeline VMF, sans lightmaps compilées d’origine. Le contrôle navigateur a confirmé le chargement, l’apparition du joueur et la catégorie ; ce n’est pas une exploration visuelle exhaustive de la carte. `npm run test:rendering`, `node test-static.mjs` et `npm run test:maps` couvrent respectivement les conventions et ressources, les alias/API et les contrôles structurels/jouabilité sans GPU.
+
 ## Téléphone et accessibilité
 
 Les nouveaux joueurs sur téléphone démarrent avec un rendu à 75 %, des textures allégées et des chiffres lisibles ; les préférences déjà enregistrées sont conservées. **Options → Touch → Réglages conseillés pour téléphone** applique ce profil aux joueurs existants (les textures changent après rechargement de la page).
@@ -181,6 +197,6 @@ Sur téléphone, le magasin utilise de grandes cartes tactiles et affiche les pr
 
 ## Vérification des cartes sous Termux
 
-`npm run test:maps` contrôle les 12 cartes, chacune dans un processus séparé pour libérer sa mémoire avant la suivante. Il vérifie les fichiers de géométrie (y compris les `.bin.gz`), les valeurs et plages des attributs, les références de textures avec leur casse exacte, les apparitions avec la physique du jeu, les points de navigation et l’accès aux sites de bombe ou de sauvetage. `node tools/audit-maps.mjs GO-Agency` produit le diagnostic JSON d’une seule carte. Ces contrôles ne remplacent pas une vérification visuelle WebGL dans le navigateur.
+`npm run test:maps` contrôle les 13 cartes, chacune dans un processus séparé pour libérer sa mémoire avant la suivante. Il vérifie les fichiers de géométrie (y compris les `.bin.gz`), les valeurs et plages des attributs, les références de textures avec leur casse exacte, les apparitions avec la physique du jeu, les points de navigation et l’accès aux sites de bombe ou de sauvetage. `node tools/audit-maps.mjs GO-Agency` produit le diagnostic JSON d’une seule carte. Ces contrôles ne remplacent pas une vérification visuelle WebGL dans le navigateur.
 
 Les otages d’Agency proches des meubles apparaissent désormais au sol, dans un espace libre, au lieu d’être remontés sur les meubles. Le serveur et le convertisseur VMF partagent cette recherche de position sûre, qui tient aussi compte des collisions réservées aux joueurs. Les caches de navigation d’Agency, Italy et Overpass ont été nettoyés des points dans des obstacles. Le serveur valide également les caches chargés ; les portes utilisables et vitres cassables restent des passages possibles. La descente à sens unique de l’hélipad d’Agency est conservée.

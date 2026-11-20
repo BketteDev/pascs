@@ -21,4 +21,4 @@ for (const map of MAPS) {
   }
   console.log(`${r.map}: geometry, textures, ${Object.values(r.spawns).flat().length} spawns, ${r.nav.nodes} navigation nodes and ${r.objectives.length} objectives OK`);
 }
-console.log('All 12 maps passed gameplay and asset checks (rendering requires a browser).');
+console.log(`All ${MAPS.length} maps passed gameplay and asset checks (rendering requires a browser).`);

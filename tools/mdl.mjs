@@ -17,7 +17,7 @@ export function loadModel(base, skin = 0) {
   // textures + search dirs + skin table
   const [numTex, texIdx, numCd, cdIdx, numSkinRef, numSkinFam, skinIdx, numBody, bodyIdx] = Array.from({ length: 9 }, (_, i) => mdl.readInt32LE(204 + i * 4));
   const texNames = Array.from({ length: numTex }, (_, i) => str(texIdx + i * 64 + mdl.readInt32LE(texIdx + i * 64)));
-  const cd = Array.from({ length: numCd }, (_, i) => str(mdl.readInt32LE(cdIdx + i * 4)).replace(/\\/g, '/'));
+  const cd = Array.from({ length: numCd }, (_, i) => str(mdl.readInt32LE(cdIdx + i * 4)).replace(/\\/g, '/').replace(/^\/+/, '')); // Source paths are relative to materials/, including a root search path.
   const fam = Math.min(skin, numSkinFam - 1);
   const skinRef = Array.from({ length: numSkinRef }, (_, i) => mdl.readInt16LE(skinIdx + (fam * numSkinRef + i) * 2));
 

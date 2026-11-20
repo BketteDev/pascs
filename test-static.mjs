@@ -14,8 +14,8 @@ try{
   let ready=false;for(let i=0;i<50;i++){try{const r=await fetch(base+'/api/info');if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert(ready,'static test server started: '+log);
   const info=await fetch(base+'/api/info').then(r=>r.json()); assert.equal(info.map,'GO-Mirage','legacy MAP environment resolves to canonical folder');
   const maps=await fetch(base+'/api/maps?grouped=1').then(r=>r.json());
-  assert.deepEqual(maps,{css:['Source-Inferno','Source-Nuke','Source-Office'],csgo:['GO-Agency','GO-Italy','GO-Lake','GO-Mirage']});
-  for(const map of [...maps.css,...maps.csgo]){const asset=await fetch(base+'/maps/'+map+'/world.json');assert.equal(asset.status,200);await asset.body.cancel();}
+  assert.deepEqual(maps,{css:['Source-Inferno','Source-Nuke','Source-Office'],csgo:['GO-Agency','GO-Italy','GO-Lake','GO-Mirage'],valorant:['Valorant-Split']});
+  for(const map of Object.values(maps).flat()){const asset=await fetch(base+'/maps/'+map+'/world.json');assert.equal(asset.status,200);await asset.body.cancel();}
   assert(maps.css.every(m=>m.startsWith('Source-'))); assert(maps.csgo.every(m=>m.startsWith('GO-')));
   const canonical=await fetch(base+'/maps/Source-Office/world.json'),legacy=await fetch(base+'/maps/cs_office/world.json');
   assert.equal(canonical.status,200);assert.equal(legacy.status,200);assert.deepEqual(await canonical.json(),await legacy.json(),'old asset URLs remain compatible');
@@ -28,6 +28,11 @@ try{
   const html=await fetch(base+'/').then(r=>r.text());assert(html.includes('ui/accessibility.css'));assert(html.includes('class="vg-button"'));
   const result=await fetch(base+'/api/admin',{method:'POST',body:JSON.stringify({password:'qa-map-migration',map:'cs_office',teamSize:1,maxPlayers:2,bots:false})});assert.equal(result.status,200);
   assert.equal((await fetch(base+'/api/info').then(r=>r.json())).map,'Source-Office','admin accepts legacy map names');
+  for(const map of ['de_split','de_split_d','de_split_d_d','Valorant-Split']){
+    const asset=await fetch(base+'/maps/'+map+'/world.json');assert.equal(asset.status,200);assert.equal((await asset.json()).game,'valorant');
+    assert.equal((await fetch(base+'/api/admin',{method:'POST',body:JSON.stringify({password:'qa-map-migration',map,teamSize:1,maxPlayers:2,bots:false})})).status,200);
+    const split=await fetch(base+'/api/info').then(r=>r.json());assert.equal(split.map,'Valorant-Split');assert.equal(split.game,'valorant');
+  }
   for(const map of disabledMaps)assert.equal((await fetch(base+'/api/admin',{method:'POST',body:JSON.stringify({password:'qa-map-migration',map})})).status,400,'admin rejects disabled maps');
   const url=base+'/'+path.basename(fixture);
   const gzip=await fetch(url,{headers:{'Accept-Encoding':'gzip'}});assert.equal(gzip.status,200);assert.equal(gzip.headers.get('content-encoding'),'gzip');assert.deepEqual(Buffer.from(await gzip.arrayBuffer()),data,'browser transparently decodes packed geometry');

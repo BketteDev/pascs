@@ -304,7 +304,7 @@ function standIn(name) {
   if (isFoliage && (isProp || clean !== base)) return gridPng([74, 102, 52, 255], [0, 0, 0, 0], (x, y) => ((x * 5 + y * 3) % 7) < 3 && (x % 4 !== 0 || y % 4 !== 0));
   if (!isWater && !isGlass && !isFoliage && !/decal|sign|poster|graffiti|overlay/.test(base)) {
     const dirs = [path.dirname(base)];
-    for (let d = path.dirname(dirs[0]); d && d !== '.'; d = path.dirname(d)) dirs.push(d);
+    for (let d = path.dirname(dirs[0]); d && d !== '.' && d !== path.dirname(d); d = path.dirname(d)) dirs.push(d);
     const cat = /brick/.test(base) ? 'brick' : /stone|cobble|flagstone|rock/.test(base) ? 'stone' : /plaster|stucco|wallpaper/.test(base) ? 'plaster' : /wood|plywood|plank/.test(base) ? 'wood' : /metal|steel|iron|corrugated/.test(base) ? 'metal' : /tile|marble/.test(base) ? 'tile' : /nature|dirt|sand|mud|grass|ground/.test(base) ? 'nature' : /concrete|asphalt|cinder|cement|floor/.test(base) ? 'concrete' : null;
     if (cat && !dirs.includes(cat)) dirs.push(cat);
     for (const dir of dirs) {
@@ -360,6 +360,7 @@ const movers = [];
 for (const e of ents) {
   const c = cls(e);
   if (!MOVER_DOORS.test(c) && !MOVER_BREAKABLES.test(c)) continue;
+  if (MAP === 'de_split' && c === 'func_door' && e.props.get('targetname') === 'barrier1') continue; // Shared freeze time already holds players in their spawns.
   const eSolids = e.kids.filter((k) => k.name === 'solid' && !inSky(solidCentre(k)));
   if (!eSolids.length) continue;
   const allMats = eSolids.flatMap((s) => parseSides(s).map((sd) => sd.material ?? '').filter((m) => m && !/^(tools\/|toolsnodraw)/i.test(m)));
@@ -448,7 +449,7 @@ writeSky(skyName, OUT);
 const modes = { wingman: { name: 'Wingman', teamSize: 2, roundTime: 90, sites: 1 } };
 const spans = { ct: spawn('info_player_counterterrorist'), t: spawn('info_player_terrorist') };
 const worldJson = {
-  game: 'csgo', sites, hostages, rescue, hurt: [], ambience: { zones: [], scapes: {}, ambients: [] },
+  game: mapDetails(MAP).game, sites, hostages, rescue, hurt: [], ambience: { zones: [], scapes: {}, ambients: [] },
   groups, props: [], collision, playerOnly, movers, sky, spawns: spans,
   fog: fogOf(ents.find((e) => cls(e) === 'env_fog_controller')), skyFog: fogOf(skyCam), sun: null, light: { ambient: [0.32, 0.34, 0.38], direct: col.slice(0, 3).map((c) => (c / m) * 0.8), sunDir },
   skyBrushIdx, surfaces: SURFACES, surfOf, overview: { pos_x: 0, pos_y: 0, scale: 1 }, mode: modes[mode] ?? null,

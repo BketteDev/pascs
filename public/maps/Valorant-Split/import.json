@@ -1,0 +1,96 @@
+{
+  "source": {
+    "archive": "de_split_vmt.zip",
+    "sha256": "4448495590e504ff968d2277abcf37d6d6e7cc73d8b17abbffbbcb8dfa6d7232",
+    "vmf": "de_split_d_d.vmf",
+    "vmfSha256": "463fe58308a7787815a0fd90595a737500051ef09afa4af662b6d961560fa5af"
+  },
+  "resources": {
+    "url": "https://gamebanana.com/mods/602270",
+    "download": "https://gamebanana.com/dl/1463610",
+    "archive": "de_split_ntw.zip",
+    "sha256": "1f9c1f14a56b7a9a5ff7f22acf6d5d27b40ea99ec20ff669cd29e322943db06f",
+    "embeddedFiles": 1796,
+    "authors": [
+      "jukmifgguggh",
+      "la06g3"
+    ]
+  },
+  "export": {
+    "propsPlaced": 1147,
+    "modelSubstitutions": 0,
+    "materialGroups": 391,
+    "texturedGroups": 372,
+    "navNodes": 2951,
+    "spawns": {
+      "ct": 25,
+      "t": 32
+    },
+    "bombsites": 2,
+    "ladders": 7,
+    "geometryBytes": 55019832
+  },
+  "missingModels": [
+    {
+      "model": "models/props_c17/concrete_barrier001a.mdl",
+      "instances": 11
+    },
+    {
+      "model": "models/props_vents/vent_large_straight001.mdl",
+      "instances": 8
+    },
+    {
+      "model": "models/props_vents/vent_large_corner002.mdl",
+      "instances": 7
+    },
+    {
+      "model": "models/props_vents/vent_cluster006.mdl",
+      "instances": 3
+    },
+    {
+      "model": "models/props_vents/vent_large_corner001.mdl",
+      "instances": 1
+    },
+    {
+      "model": "models/props_rooftop/satellitedish02.mdl",
+      "instances": 1
+    }
+  ],
+  "fallbackMaterials": [
+    "vllt/kaizen/concrete_wall_04_blend",
+    "metal/metalfloor002a",
+    "kaizen/grass_moss_blend",
+    "kaizen/kaizen_street_blend",
+    "vllt/kaizen/concrete_wall05_blend_orange",
+    "vllt/kaizen/tiles06_orange_blend",
+    "vllt/kaizen/tiles06_blend",
+    "concrete/concretewall064d",
+    "concrete/concretewall064c",
+    "metal/metalpipe008a",
+    "building_template/courtyard_template001a",
+    "concrete/hr_c/hr_sidewalk_d_damaged_a",
+    "concrete/concretewall060f",
+    "concrete/concretewall064a",
+    "wood/woodshelf002a",
+    "glass/glasswindow031b",
+    "props/tarpaperroof002a",
+    "prop:models/props_mall/mall_bench",
+    "vllt/kaizen/kaizen_street_blend_cheapest"
+  ],
+  "skippedOverlays": [
+    "decals/decalgraffiti046a",
+    "glass/glasswindow028c",
+    "glass/glasswindow032a",
+    "decals/decalgraffiti050a",
+    "vllt/kaizen/models/foliage/ivy_dense",
+    "vllt/kaizen/cherry_blossom_decal",
+    "kaizen/overlays/stripe_grey60",
+    "kaizen/overlays/grunge_strip01",
+    "decals/decal_paintsplatterblue001",
+    "de_train/train_oldwindows_02"
+  ],
+  "limits": [
+    "VMF lighting is approximated, not the compiled BSP lightmaps.",
+    "Timed Source barrier1 doors are omitted; the existing shared round freeze holds players instead."
+  ]
+}

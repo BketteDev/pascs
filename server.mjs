@@ -6,7 +6,7 @@ import os from 'os';
 import crypto from 'crypto';
 import zlib from 'zlib';
 import { WebSocketServer } from 'ws';
-import { mapDetails, mapFolder, PLAYABLE_MAPS } from './public/maps.js';
+import { GAMES, mapDetails, mapFolder, PLAYABLE_MAPS } from './public/maps.js';
 import { createGame } from './server/game.mjs';
 
 const pub = path.join(import.meta.dirname, 'public');
@@ -29,7 +29,7 @@ const indexHeaders = {
 
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, 'http://x'), url = decodeURIComponent(reqUrl.pathname);
-  if (url === '/api/maps') { const list = builtMaps().sort(); return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(reqUrl.searchParams.has('grouped') ? { css: list.filter((m) => mapGame(m) === 'css'), csgo: list.filter((m) => mapGame(m) === 'csgo') } : list)); }
+  if (url === '/api/maps') { const list = builtMaps().sort(); return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(reqUrl.searchParams.has('grouped') ? Object.fromEntries(Object.keys(GAMES).map((g) => [g, list.filter((m) => mapGame(m) === g)])) : list)); }
   if (url === '/api/admin' && req.method === 'POST') return admin(req, res);
   if (url === '/api/info') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ map: config.map, game: mapGame(config.map), mode: config.mode ?? 'classic', teamSize: game.teamSize, maxPlayers: game.maxPlayers, botDifficulty: game.botDifficulty, snapshotRate: game.snapshotRate }));
   if (url === '/' || url === '/index.html') {
