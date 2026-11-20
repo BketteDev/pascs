@@ -159,6 +159,17 @@ Les conventions ont été comparées aux sources Valve : [rotations Source](http
 
 Limites des ressources disponibles : Overpass référence encore `models/props_equipment/metal_ladder002_new.mdl` et `models/props_canal/canal_bars00{1,2,3}.mdl`, absents des sources installées ; les garde-corps `props_mill/stair_railing_{long,short}.mdl` utilisent toujours une substitution Inferno aux dimensions différentes. Leur restauration fidèle reste nécessaire. Des matériaux de remplacement et des modèles absents subsistent également sur Italy et ShortDust. Les tests structurels ne prouvent pas la fidélité visuelle de ces éléments.
 
+Pour terminer Overpass, il faut les ressources **Source 1** correspondant aux VMF de ce projet (décompilation datée du 20 octobre 2018) : `csgo/pak01_dir.vpk` avec ses segments `pak01_*.vpk`, ou les six modèles ci-dessous extraits avec leurs fichiers `.vvd`, `.dx90.vtx`, `.phy` lorsqu’ils existent, et leurs matériaux `.vmt`/`.vtf` référencés :
+
+- `models/props_equipment/metal_ladder002_new.mdl`
+- `models/props_canal/canal_bars001.mdl`
+- `models/props_canal/canal_bars002.mdl`
+- `models/props_canal/canal_bars003.mdl`
+- `models/props_mill/stair_railing_long.mdl`
+- `models/props_mill/stair_railing_short.mdl`
+
+Ces noms ont été recherchés dans le contenu local, l’archive CS:S et le VPK CS2 installé : aucun original utilisable. La distribution [officielle CS:GO sur Steam](https://store.steampowered.com/app/4465480/CounterStrike_Global_Offensive/) est une provenance à vérifier pour les ressources Source 1 ; sa présence sur Steam ne garantit pas qu’elle conserve ces variantes de 2018. La matrice de rotation de l’exporteur correspond à celle de Valve : aucune rotation arbitraire n’a été ajoutée pour masquer le mauvais remplacement de garde-corps. Le contrôle visuel effectué porte sur le chargement d’Italy dans un navigateur ; les six défauts de ressources ci-dessus restent ouverts.
+
 ## Téléphone et accessibilité
 
 Les nouveaux joueurs sur téléphone démarrent avec un rendu à 75 %, des textures allégées et des chiffres lisibles ; les préférences déjà enregistrées sont conservées. **Options → Touch → Réglages conseillés pour téléphone** applique ce profil aux joueurs existants (les textures changent après rechargement de la page).
