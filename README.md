@@ -145,13 +145,10 @@ Les dossiers, les listes Admin, le tableau des scores et le titre de la page uti
 | Source-Nuke | GO-Italy |
 | Source-Office | GO-Lake |
 | | GO-Mirage |
-| | GO-Overpass |
-| | GO-ShortDust |
-| | GO-ShortNuke |
 
 Le registre partagé est `public/maps.js`. Les sélecteurs affichent uniquement les dossiers canoniques de la catégorie choisie, même si un ancien serveur renvoie des alias en doublon. Les anciens identifiants des cartes actives (`cs_office`, `de_mirage`, `de_mirage_csgo_new`, etc.) restent acceptés dans `MAP`, la configuration, l’API Admin et les URL des ressources.
 
-`GO-Bank` et `Source-Dust2` sont désactivées : absentes des listes, refusées par l’API Admin et au démarrage, ressources HTTP en statut 410. Leurs fichiers et sources restent conservés. Les configurations existantes utilisant l’une de ces cartes doivent choisir une carte active ; le nouveau défaut est `Source-Inferno`.
+`GO-Bank`, `Source-Dust2`, `GO-ShortNuke`, `GO-ShortDust` et `GO-Overpass` sont désactivées : absentes des listes, refusées par l’API Admin et au démarrage, ressources HTTP en statut 410. Leurs fichiers et sources restent conservés. Les configurations existantes utilisant l’une de ces cartes doivent choisir une carte active ; le nouveau défaut est `Source-Inferno`.
 
 Italy, Overpass et ShortDust ont été reconstruites avec les overlays projetés et découpés sur leurs faces de support, les UV de relief calculés sur la surface plane d’origine et sans simplification des modèles fins (bordures, végétation, grilles, barrières). Le ciel partage toujours l’orientation de la caméra du jeu, y compris sans ciel 3D. `npm run test:rendering` vérifie ces conventions sans GPU.
 
@@ -159,7 +156,7 @@ Les conventions ont été comparées aux sources Valve : [rotations Source](http
 
 Limites des ressources disponibles : Overpass référence encore `models/props_equipment/metal_ladder002_new.mdl` et `models/props_canal/canal_bars00{1,2,3}.mdl`, absents des sources installées ; les garde-corps `props_mill/stair_railing_{long,short}.mdl` utilisent toujours une substitution Inferno aux dimensions différentes. Leur restauration fidèle reste nécessaire. Des matériaux de remplacement et des modèles absents subsistent également sur Italy et ShortDust. Les tests structurels ne prouvent pas la fidélité visuelle de ces éléments.
 
-Pour terminer Overpass, il faut les ressources **Source 1** correspondant aux VMF de ce projet (décompilation datée du 20 octobre 2018) : `csgo/pak01_dir.vpk` avec ses segments `pak01_*.vpk`, ou les six modèles ci-dessous extraits avec leurs fichiers `.vvd`, `.dx90.vtx`, `.phy` lorsqu’ils existent, et leurs matériaux `.vmt`/`.vtf` référencés :
+Diagnostic conservé pour référence : aucune poursuite des réparations d’Overpass, ShortDust ou ShortNuke n’est prévue dans ce retrait. Pour une éventuelle restauration ultérieure d’Overpass, il faudrait les ressources **Source 1** correspondant aux VMF de ce projet (décompilation datée du 20 octobre 2018) : `csgo/pak01_dir.vpk` avec ses segments `pak01_*.vpk`, ou les six modèles ci-dessous extraits avec leurs fichiers `.vvd`, `.dx90.vtx`, `.phy` lorsqu’ils existent, et leurs matériaux `.vmt`/`.vtf` référencés :
 
 - `models/props_equipment/metal_ladder002_new.mdl`
 - `models/props_canal/canal_bars001.mdl`
